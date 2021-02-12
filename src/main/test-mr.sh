@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 #
 # basic map-reduce test
@@ -99,7 +99,6 @@ fi
 
 wait
 
-
 #########################################################
 echo '***' Starting map parallelism test.
 
@@ -178,11 +177,12 @@ else
 fi
 
 wait
-rm -f mr-*
 
 #########################################################
 # test whether any worker or coordinator exits before the
 # task has completed (i.e., all output files have been finalized)
+rm -f mr-*
+
 echo '***' Starting early exit test.
 
 timeout -k 2s 180s ../mrcoordinator ../pg*txt &
@@ -192,15 +192,17 @@ sleep 1
 
 # start multiple workers.
 timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-pid=$!
 timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
 timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
 
-wait $pid
+# wait for any of the coord or workers to exit
+# `jobs` ensures that any completed old processes from other tests
+# are not waited upon
+jobs &> /dev/null
+wait -n
 
-# the first worker has exited.
-# the job should have finished: this means that the output should be final
-# otherwise, either a worker exited early, or the coordinator exited early
+# a process has exited. this means that the output should be finalized
+# otherwise, either a worker or the coordinator exited early
 sort mr-out* | grep . > mr-wc-all-initial
 
 # wait for remaining workers and coordinator to exit.
