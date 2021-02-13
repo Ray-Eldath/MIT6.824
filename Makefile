@@ -44,4 +44,4 @@ LABS=" lab1 lab2a lab2b lab2c lab3a lab3b lab4a lab4b "
 .PHONY: check-%
 check-%:
 	@echo "Checking that your submission builds correctly..."
-	@./.check-build git://g.csail.mit.edu/6.824-golabs-2020 $(patsubst check-%,%,$@)
+	@./.check-build git://g.csail.mit.edu/6.824-golabs-2021 $(patsubst check-%,%,$@)

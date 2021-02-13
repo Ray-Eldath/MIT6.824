@@ -11,7 +11,7 @@ REFERENCE_FILES=(
     src/mrapps/rtiming.go
     src/mrapps/wc.go
     src/main/mrsequential.go
-    src/main/mrmaster.go
+    src/main/mrcoordinator.go
     src/main/mrworker.go
 
     # lab 2
@@ -25,8 +25,8 @@ REFERENCE_FILES=(
     src/kvraft/config.go
 
     # lab 4a
-    src/shardmaster/test_test.go
-    src/shardmaster/config.go
+    src/shardctrler/test_test.go
+    src/shardctrler/config.go
 
     # lab 4b
     src/shardkv/test_test.go
@@ -75,7 +75,7 @@ check_lab1() {
     check_cmd go build -buildmode=plugin crash.go
     check_cmd go build -buildmode=plugin nocrash.go
     check_cmd cd ../main
-    check_cmd go build mrmaster.go
+    check_cmd go build mrcoordinator.go
     check_cmd go build mrworker.go
     check_cmd go build mrsequential.go
 }
@@ -91,7 +91,7 @@ check_lab3() {
 }
 
 check_lab4a() {
-    check_cmd cd src/shardmaster
+    check_cmd cd src/shardctrler
     check_cmd go test -c
 }
 
