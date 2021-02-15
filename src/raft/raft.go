@@ -17,9 +17,19 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "sync/atomic"
-import "6.824/labrpc"
+import (
+	"bytes"
+	"fmt"
+	"log"
+	"math/rand"
+	"reflect"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"6.824/labgob"
+	"6.824/labrpc"
+)
 
 // import "bytes"
 // import "6.824/labgob"
@@ -121,7 +131,7 @@ func (rf *Raft) readPersist(data []byte) {
 //
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 
-	// Your code here (2C).
+	// Your code here (2D).
 
 	return true
 }
@@ -131,7 +141,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2C).
+	// Your code here (2D).
 
 }
 
