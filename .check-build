@@ -55,7 +55,7 @@ main() {
 
     case $labnum in
         "lab1") check_lab1;;
-        "lab2a"|"lab2b"|"lab2c") check_lab2;;
+        "lab2a"|"lab2b"|"lab2c"|"lab2d") check_lab2;;
         "lab3a"|"lab3b") check_lab3;;
         "lab4a") check_lab4a;;
         "lab4b") check_lab4b;;
