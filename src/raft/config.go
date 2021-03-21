@@ -269,13 +269,14 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.mu.Unlock()
 
 	applyCh := make(chan ApplyMsg)
-	go applier(i, applyCh)
 
 	rf := Make(ends, i, cfg.saved[i], applyCh)
 
 	cfg.mu.Lock()
 	cfg.rafts[i] = rf
 	cfg.mu.Unlock()
+
+	go applier(i, applyCh)
 
 	svc := labrpc.MakeService(rf)
 	srv := labrpc.MakeServer()

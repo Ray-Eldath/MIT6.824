@@ -29,7 +29,7 @@ LABS=" lab1 lab2a lab2b lab2c lab2d lab3a lab3b lab4a lab4b "
 			if test "$$line" != "yes" ; then echo "Giving up submission"; exit; fi; \
 			if test `stat -c "%s" "$@-handin.tar.gz" 2>/dev/null || stat -f "%z" "$@-handin.tar.gz"` -ge 20971520 ; then echo "File exceeds 20MB."; exit; fi; \
 			cat api.key | tr -d '\n' > .api.key.trimmed ; \
-			curl -F file=@$@-handin.tar.gz -F "key=<.api.key.trimmed" \
+			curl --silent --fail --show-error -F file=@$@-handin.tar.gz -F "key=<.api.key.trimmed" \
 			https://6824.scripts.mit.edu/2021/handin.py/upload > /dev/null || { \
 				echo ; \
 				echo "Submit seems to have failed."; \
