@@ -59,7 +59,7 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 
 //
 // servers[] contains the ports of the set of
-// servers that will cooperate via Paxos to
+// servers that will cooperate via Raft to
 // form the fault-tolerant shardctrler service.
 // me is the index of the current server in servers[].
 //

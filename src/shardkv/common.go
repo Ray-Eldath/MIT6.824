@@ -2,7 +2,7 @@ package shardkv
 
 //
 // Sharded key/value server.
-// Lots of replica groups, each running op-at-a-time paxos.
+// Lots of replica groups, each running Raft.
 // Shardctrler decides which group serves each shard.
 // Shardctrler may change shard assignment from time to time.
 //

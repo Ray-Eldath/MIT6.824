@@ -1,12 +1,13 @@
 package shardctrler
 
 import (
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 // import "time"
-import "fmt"
 
 func check(t *testing.T, groups []int, ck *Clerk) {
 	c := ck.Query(-1)
@@ -375,6 +376,28 @@ func TestMulti(t *testing.T) {
 			}
 		}
 	}
+
+	fmt.Printf("  ... Passed\n")
+
+	fmt.Printf("Test: Check Same config on servers ...\n")
+
+	isLeader, leader := cfg.Leader()
+	if !isLeader {
+		t.Fatalf("Leader not found")
+	}
+	c := ck.Query(-1) // Config leader claims
+
+	cfg.ShutdownServer(leader)
+
+	attempts := 0
+	for isLeader, leader = cfg.Leader(); isLeader; time.Sleep(1 * time.Second) {
+		if attempts++; attempts >= 3 {
+			t.Fatalf("Leader not found")
+		}
+	}
+
+	c1 = ck.Query(-1)
+	check_same_config(t, c, c1)
 
 	fmt.Printf("  ... Passed\n")
 }
