@@ -6,6 +6,7 @@ package mr
 // remember to capitalize all names.
 //
 
+import "time"
 import "os"
 import "strconv"
 
@@ -24,6 +25,55 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type Placeholder struct{}
+
+// ====== FinishTask =======
+
+type FinishArgs struct {
+	IsMap bool
+	Id    int
+}
+
+// ====== Task =======
+
+type TaskState int
+
+const (
+	Pending TaskState = iota
+	Executing
+	Finished
+)
+
+type MapTask struct {
+	TaskMeta
+	Filename string
+}
+
+type ReduceTask struct {
+	TaskMeta
+	IntermediateFilenames []string
+}
+
+type TaskMeta struct {
+	State     TaskState
+	StartTime time.Time
+	Id        int
+}
+
+type TaskOperation int
+
+const (
+	ToWait TaskOperation = iota
+	ToRun
+)
+
+type Task struct {
+	Operation TaskOperation
+	IsMap     bool
+	NReduce   int
+	Map       MapTask
+	Reduce    ReduceTask
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.
