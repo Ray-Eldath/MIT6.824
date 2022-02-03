@@ -464,14 +464,14 @@ func (rf *Raft) BroadcastHeartbeat() {
 	term := rf.term
 	leaderId := rf.me
 	leaderCommit := rf.commitIndex
-	for i := range rf.peers {
-		if i == leaderId {
-			continue
-		}
-		rf.Debug(dWarn, "try to lock rf.replicateCond[%d].L", i)
-		rf.replicateCond[i].L.Lock()
-		rf.Debug(dWarn, "locked rf.replicateCond[%d].L", i)
-	}
+	// for i := range rf.peers {
+	// 	if i == leaderId {
+	// 		continue
+	// 	}
+	// 	rf.Debug(dWarn, "try to lock rf.replicateCond[%d].L", i)
+	// 	rf.replicateCond[i].L.Lock()
+	// 	rf.Debug(dWarn, "locked rf.replicateCond[%d].L", i)
+	// }
 	rf.mu.Unlock()
 
 	for i := range rf.peers {
@@ -485,9 +485,6 @@ func (rf *Raft) BroadcastHeartbeat() {
 		rf.mu.Unlock()
 
 		go func(peer int) {
-			rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
-			rf.replicateCond[peer].L.Unlock()
-			rf.Debug(dWarn, "sync done. unlocked replicateCond[%d].L", peer)
 			rf.Sync(peer, &AppendEntriesArgs{
 				Term:         term,
 				LeaderId:     leaderId,
@@ -496,6 +493,9 @@ func (rf *Raft) BroadcastHeartbeat() {
 				PrevLogIndex: prevLogIndex,
 				Entries:      nil,
 			})
+			// rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
+			// rf.replicateCond[peer].L.Unlock()
+			// rf.Debug(dWarn, "sync done. unlocked replicateCond[%d].L", peer)
 		}(i)
 	}
 
@@ -562,10 +562,11 @@ func (rf *Raft) needApply() bool {
 }
 
 func (rf *Raft) DoReplicate(peer int) {
+	rf.replicateCond[peer].L.Lock()
+	defer rf.replicateCond[peer].L.Unlock()
 	for {
-		rf.Debug(dWarn, "DoReplicate: try to acquire replicateCond[%d].L", peer)
-		rf.replicateCond[peer].L.Lock()
-		rf.Debug(dWarn, "DoReplicate: acquired replicateCond[%d].L", peer)
+		// rf.Debug(dWarn, "DoReplicate: try to acquire replicateCond[%d].L", peer)
+		// rf.Debug(dWarn, "DoReplicate: acquired replicateCond[%d].L", peer)
 		for !rf.needReplicate(peer) {
 			rf.replicateCond[peer].Wait()
 			if rf.killed() {
@@ -575,7 +576,6 @@ func (rf *Raft) DoReplicate(peer int) {
 		}
 
 		rf.Replicate(peer)
-		rf.replicateCond[peer].L.Unlock()
 	}
 }
 
