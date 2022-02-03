@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -17,7 +20,7 @@ import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
-const RaftElectionTimeout = 1000 * time.Millisecond
+const RaftElectionTimeout = 600 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
 	servers := 3
@@ -155,6 +158,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
+	println("disconnect S" + strconv.Itoa(leader))
 	cfg.disconnect((leader + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -166,11 +170,13 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.one(105, servers-1, false)
 
 	// re-connect
+	println("reconnect")
 	cfg.connect((leader + 1) % servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
 	// on new commands.
+	println("new commands")
 	cfg.one(106, servers, true)
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(107, servers, true)

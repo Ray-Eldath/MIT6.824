@@ -58,7 +58,7 @@ func (rf *Raft) FormatLog() string {
 	s := ""
 	for i := 1; i < len(rf.log); i++ {
 		entry := rf.log[i]
-		s += fmt.Sprintf("%d(%d) ", entry.Term, entry.Term)
+		s += fmt.Sprintf("%v ", entry)
 	}
 	return s
 }
