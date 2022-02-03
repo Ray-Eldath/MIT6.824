@@ -485,6 +485,9 @@ func (rf *Raft) BroadcastHeartbeat() {
 		rf.mu.Unlock()
 
 		go func(peer int) {
+			rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
+			rf.replicateCond[peer].L.Unlock()
+			rf.Debug(dWarn, "sync done. unlocked replicateCond[%d].L", peer)
 			rf.Sync(peer, &AppendEntriesArgs{
 				Term:         term,
 				LeaderId:     leaderId,
@@ -493,9 +496,6 @@ func (rf *Raft) BroadcastHeartbeat() {
 				PrevLogIndex: prevLogIndex,
 				Entries:      nil,
 			})
-			rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
-			rf.replicateCond[peer].L.Unlock()
-			rf.Debug(dWarn, "sync done. unlocked replicateCond[%d].L", peer)
 		}(i)
 	}
 
