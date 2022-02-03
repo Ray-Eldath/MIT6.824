@@ -504,6 +504,7 @@ func (rf *Raft) BroadcastHeartbeat() {
 
 func (rf *Raft) DoHeartbeat() {
 	for !rf.killed() {
+		time.Sleep(HeartbeatInterval)
 		rf.mu.Lock()
 		if rf.state != Leader {
 			rf.mu.Unlock()
@@ -517,7 +518,6 @@ func (rf *Raft) DoHeartbeat() {
 			}
 			go rf.Replicate(i)
 		}
-		time.Sleep(HeartbeatInterval)
 	}
 }
 
