@@ -9,7 +9,6 @@ package raft
 //
 
 import (
-	"strconv"
 	"testing"
 )
 import "fmt"
@@ -20,7 +19,7 @@ import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
-const RaftElectionTimeout = 600 * time.Millisecond
+const RaftElectionTimeout = 1000 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
 	servers := 3
@@ -63,21 +62,25 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
+	fmt.Printf("disconnect S%d\n", leader1)
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
+	fmt.Printf("rejoin")
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no leader should
 	// be elected.
+	println("no quorum")
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
 
+	println("rejoin quorum")
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
@@ -158,8 +161,9 @@ func TestFailAgree2B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
-	println("disconnect S" + strconv.Itoa(leader))
-	cfg.disconnect((leader + 1) % servers)
+	i := (leader + 1) % servers
+	fmt.Printf("disconnect one follower %d from leader %d\n", i, leader)
+	cfg.disconnect(i)
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.

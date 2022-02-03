@@ -225,9 +225,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.resetTerm(args.Term)
 		}
 		if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev != nil && prev.Term != args.PrevLogTerm {
-			rf.Debug(dLog, "log consistency check failed. local log at prev: %+v", prev)
+			rf.Debug(dLog, "log consistency check failed. local log at prev: %+v  full log: %v", prev, rf.log)
 			reply.Success = false
-
+			// reply.ConflictingIndex =
 		} else {
 			if len(args.Entries) > 0 {
 				// do merge
@@ -337,7 +337,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) isAtLeastUpToDate(args *RequestVoteArgs) bool {
-	b := args.LastLogTerm >= rf.GetLogTail().Term || args.LastLogIndex >= rf.GetLogTail().Index
+	b := false
+	if args.LastLogTerm == rf.GetLogTail().Term {
+		b = args.LastLogIndex >= rf.GetLogTail().Index
+	} else {
+		b = args.LastLogTerm >= rf.GetLogTail().Term
+	}
 	if !b {
 		rf.Debug(dVote, "hands down RequestVote from %d", args.CandidateId)
 	}
@@ -455,22 +460,43 @@ func (rf *Raft) DoElection() {
 
 // BroadcastHeartbeat must be called with rf.mu held.
 func (rf *Raft) BroadcastHeartbeat() {
-	// rf.Debug(dHeartbeat, "heartbeat")
+	rf.Debug(dHeartbeat, "heartbeat start")
 	term := rf.term
 	leaderId := rf.me
 	leaderCommit := rf.commitIndex
+	for i := range rf.peers {
+		if i == leaderId {
+			continue
+		}
+		rf.Debug(dWarn, "try to lock rf.replicateCond[%d].L", i)
+		rf.replicateCond[i].L.Lock()
+		rf.Debug(dWarn, "locked rf.replicateCond[%d].L", i)
+	}
 	rf.mu.Unlock()
 
 	for i := range rf.peers {
-		if i == rf.me {
+		if i == leaderId {
 			continue
 		}
-		go rf.Sync(i, &AppendEntriesArgs{
-			Term:         term,
-			LeaderId:     leaderId,
-			LeaderCommit: leaderCommit,
-			Entries:      nil,
-		})
+		rf.mu.Lock()
+		nextIndex := rf.nextIndex[i]
+		prevLogIndex := rf.log[nextIndex-1].Index
+		prevLogTerm := rf.log[nextIndex-1].Term
+		rf.mu.Unlock()
+
+		go func(peer int) {
+			rf.Sync(peer, &AppendEntriesArgs{
+				Term:         term,
+				LeaderId:     leaderId,
+				LeaderCommit: leaderCommit,
+				PrevLogTerm:  prevLogTerm,
+				PrevLogIndex: prevLogIndex,
+				Entries:      nil,
+			})
+			rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
+			rf.replicateCond[peer].L.Unlock()
+			rf.Debug(dWarn, "sync done. unlocked replicateCond[%d].L", peer)
+		}(i)
 	}
 
 	rf.mu.Lock()
@@ -515,9 +541,9 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 		}
 
 		rf.mu.Lock()
-		toCommit := rf.log[rf.commitIndex]
 		rf.lastApplied += 1
-		rf.Debug(dCommit, "commit rf[%d]=%+v", rf.commitIndex, toCommit)
+		toCommit := rf.log[rf.lastApplied]
+		rf.Debug(dCommit, "apply rf[%d]=%+v", rf.lastApplied, toCommit)
 		rf.mu.Unlock()
 
 		applyCh <- ApplyMsg{
@@ -536,25 +562,33 @@ func (rf *Raft) needApply() bool {
 }
 
 func (rf *Raft) DoReplicate(peer int) {
-	rf.replicateCond[peer].L.Lock()
-	defer rf.replicateCond[peer].L.Unlock()
 	for {
+		rf.Debug(dWarn, "DoReplicate: try to acquire replicateCond[%d].L", peer)
+		rf.replicateCond[peer].L.Lock()
+		rf.Debug(dWarn, "DoReplicate: acquired replicateCond[%d].L", peer)
 		for !rf.needReplicate(peer) {
 			rf.replicateCond[peer].Wait()
 			if rf.killed() {
+				rf.replicateCond[peer].L.Unlock()
 				return
 			}
 		}
 
 		rf.Replicate(peer)
+		rf.replicateCond[peer].L.Unlock()
 	}
 }
 
 func (rf *Raft) needReplicate(peer int) bool {
+	rf.Debug(dWarn, "needReplicate: try to acquire mu.Lock")
 	rf.mu.Lock()
+	rf.Debug(dWarn, "needReplicate: acquired mu.Lock")
 	defer rf.mu.Unlock()
+	if peer != rf.me {
+		return false
+	}
 	rf.Debug(dTrace, "needReplicate: matchIndex[%d]=%d  log tail %+v", peer, rf.matchIndex[peer], rf.GetLogTail())
-	return rf.state == Leader && rf.matchIndex[peer] < rf.GetLogTail().Index && peer != rf.me
+	return rf.state == Leader && rf.matchIndex[peer] < rf.GetLogTail().Index
 }
 
 // Replicate must be called W/O rf.mu held.
@@ -606,7 +640,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 			entriesTailIndex := LogTail(args.Entries).Index
 			rf.matchIndex[peer] = entriesTailIndex
 			rf.nextIndex[peer] = entriesTailIndex + 1
-			rf.Debug(dHeartbeat, "entriesTailIndex=%d commitIndex=%d matchIndex=%v nextIndex=%v", entriesTailIndex, rf.commitIndex, rf.matchIndex, rf.nextIndex)
+			rf.Debug(dHeartbeat, "S%d entriesTailIndex=%d commitIndex=%d matchIndex=%v nextIndex=%v", peer, entriesTailIndex, rf.commitIndex, rf.matchIndex, rf.nextIndex)
 
 			// update commitIndex
 			preCommitIndex := rf.commitIndex
@@ -660,7 +694,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	})
 	rf.matchIndex[rf.me] += 1
-	rf.Debug(dClient, "start replication with log %s", rf.FormatLog())
+	rf.Debug(dClient, "client start replication with log %s", rf.FormatLog())
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}
