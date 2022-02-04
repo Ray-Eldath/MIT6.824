@@ -580,9 +580,9 @@ func (rf *Raft) DoReplicate(peer int) {
 }
 
 func (rf *Raft) needReplicate(peer int) bool {
-	rf.Debug(dWarn, "needReplicate: try to acquire mu.Lock")
+	// rf.Debug(dWarn, "needReplicate: try to acquire mu.Lock")
 	rf.mu.Lock()
-	rf.Debug(dWarn, "needReplicate: acquired mu.Lock")
+	// rf.Debug(dWarn, "needReplicate: acquired mu.Lock")
 	defer rf.mu.Unlock()
 	if peer != rf.me {
 		return false
