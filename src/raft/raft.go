@@ -117,6 +117,9 @@ func (rf *Raft) GetLogAtIndex(logIndex int) *LogEntry {
 	if len(rf.log) < 2 {
 		return nil
 	}
+	if logIndex < 1 {
+		panic("logIndex < 1")
+	}
 	logicalLogSubscript := logIndex - rf.log[1].Index
 	subscript := logicalLogSubscript + 1
 	if len(rf.log) > subscript {
@@ -126,7 +129,7 @@ func (rf *Raft) GetLogAtIndex(logIndex int) *LogEntry {
 	}
 }
 
-func (rf *Raft) GetLogTail() *LogEntry {
+func (rf *Raft) LogTail() *LogEntry {
 	return LogTail(rf.log)
 }
 
@@ -232,46 +235,59 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, reset rf.term", args.Term, rf.term, args.LeaderId)
 			rf.resetTerm(args.Term)
 		}
-		if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev != nil && prev.Term != args.PrevLogTerm {
-			rf.Debug(dLog, "log consistency check failed. local log at prev: %+v  full log: %v", prev, rf.log)
-			reply.Success = false
-			// prev.Term
-			// reply.ConflictingIndex =
-		} else {
-			if len(args.Entries) > 0 {
-				// do merge
-				rf.Debug(dLog, "before merge: %s", rf.FormatLog())
-				for _, entry := range args.Entries {
-					local := rf.GetLogAtIndex(entry.Index)
-					if local != nil {
-						if local.Index != entry.Index {
-							panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  local log at entry.Index: %+v", rf.log[1].Index, local))
+		if len(args.Entries) > 0 {
+			if args.PrevLogIndex > 0 {
+				if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
+					rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
+					// TODO: reply.ConflictingIndex =
+					if prev != nil {
+						if prev.Index-1 > 0 {
+							reply.ConflictingIndex = rf.GetLogAtIndex(prev.Index - 1).Index
+							reply.ConflictingTerm = rf.GetLogAtIndex(prev.Index - 1).Term
+						} else {
+							reply.ConflictingIndex = 0
+							reply.ConflictingTerm = 0 // TODO: may fail here!
 						}
-						local.Term = entry.Term
-						local.Command = entry.Command
 					} else {
-						// if rf.log[len(rf.log)-1].Index+1 != entry.Index {
-						// 	panic(rf.Sdebug(dFatal, "rf.log[len(rf.log)-1].Index+1 != entry.Index. headIndex=%d", rf.log[1].Index))
-						// }
-						rf.log = append(rf.log, &LogEntry{
-							Term:    entry.Term,
-							Index:   entry.Index,
-							Command: entry.Command,
-						})
-						rf.log[0].Index += 1
+						reply.ConflictingTerm = rf.LogTail().Index
+						reply.ConflictingTerm = rf.LogTail().Term
 					}
-				}
-				rf.Debug(dLog, "after merge: %s", rf.FormatLog())
-			}
+					reply.Success = false
 
-			// trigger apply
-			if args.LeaderCommit > rf.commitIndex {
-				rf.commitIndex = Min(args.LeaderCommit, rf.GetLogTail().Index)
-				rf.applyCond.Broadcast()
+					return
+				}
 			}
-			rf.Debug(dLog, "finish broadcasting applyCond: commitIndex=%d", rf.commitIndex)
-			reply.Success = true
+			// if pass log consistency check, do merge
+			rf.Debug(dLog, "before merge: %s", rf.FormatLog())
+			for _, entry := range args.Entries {
+				local := rf.GetLogAtIndex(entry.Index)
+				if local != nil {
+					if local.Index != entry.Index {
+						panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  local log at entry.Index: %+v", rf.log[1].Index, local))
+					}
+					local.Term = entry.Term
+					local.Command = entry.Command
+				} else {
+					// if rf.log[len(rf.log)-1].Index+1 != entry.Index {
+					// 	panic(rf.Sdebug(dFatal, "rf.log[len(rf.log)-1].Index+1 != entry.Index. headIndex=%d", rf.log[1].Index))
+					// }
+					rf.log = append(rf.log, &LogEntry{
+						Term:    entry.Term,
+						Index:   entry.Index,
+						Command: entry.Command,
+					})
+					rf.log[0].Index += 1
+				}
+			}
+			rf.Debug(dLog, "after merge: %s", rf.FormatLog())
 		}
+		// trigger apply
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = Min(args.LeaderCommit, rf.LogTail().Index)
+			rf.applyCond.Broadcast()
+		}
+		rf.Debug(dLog, "finish process heartbeat: commitIndex=%d", rf.commitIndex)
+		reply.Success = true
 	} else if rf.state == Leader {
 		if args.Term > rf.term {
 			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, back to Follower", args.Term, rf.term, args.LeaderId)
@@ -318,7 +334,7 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// now := time.Now()
+	now := time.Now()
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.Term = rf.term
@@ -339,7 +355,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if (rf.votedFor == nil || *rf.votedFor == args.CandidateId) && rf.isAtLeastUpToDate(args) {
 		rf.votedFor = &args.CandidateId
-		// rf.lastHeartbeat = now
+		rf.lastHeartbeat = now
 		reply.VoteGranted = true
 	} else {
 		reply.VoteGranted = false
@@ -348,10 +364,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) isAtLeastUpToDate(args *RequestVoteArgs) bool {
 	b := false
-	if args.LastLogTerm == rf.GetLogTail().Term {
-		b = args.LastLogIndex >= rf.GetLogTail().Index
+	if args.LastLogTerm == rf.LogTail().Term {
+		b = args.LastLogIndex >= rf.LogTail().Index
 	} else {
-		b = args.LastLogTerm >= rf.GetLogTail().Term
+		b = args.LastLogTerm >= rf.LogTail().Term
 	}
 	if !b {
 		rf.Debug(dVote, "hands down RequestVote from %d", args.CandidateId)
@@ -422,8 +438,8 @@ func (rf *Raft) DoElection() {
 			args := &RequestVoteArgs{
 				Term:         rf.term,
 				CandidateId:  rf.me,
-				LastLogIndex: rf.GetLogTail().Index,
-				LastLogTerm:  rf.GetLogTail().Term,
+				LastLogIndex: rf.LogTail().Index,
+				LastLogTerm:  rf.LogTail().Term,
 			}
 			rf.mu.Unlock()
 
@@ -455,12 +471,13 @@ func (rf *Raft) DoElection() {
 						vote += 1
 
 						if rf.IsMajority(int(vote)) {
-							rf.state = Leader
 							for i = 0; i < len(rf.peers); i++ {
-								rf.nextIndex[i] = rf.GetLogTail().Index + 1
+								rf.nextIndex[i] = rf.LogTail().Index + 1
+								rf.matchIndex[i] = 0
 							}
 							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
 							rf.BroadcastHeartbeat()
+							rf.state = Leader
 						}
 					}
 				}(i, args)
@@ -491,19 +508,12 @@ func (rf *Raft) BroadcastHeartbeat() {
 		if i == leaderId {
 			continue
 		}
-		rf.mu.Lock()
-		nextIndex := rf.nextIndex[i]
-		prevLogIndex := rf.log[nextIndex-1].Index
-		prevLogTerm := rf.log[nextIndex-1].Term
-		rf.mu.Unlock()
 
 		go func(peer int) {
 			rf.Sync(peer, &AppendEntriesArgs{
 				Term:         term,
 				LeaderId:     leaderId,
 				LeaderCommit: leaderCommit,
-				PrevLogTerm:  prevLogTerm,
-				PrevLogIndex: prevLogIndex,
 				Entries:      nil,
 			})
 			// rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
@@ -591,11 +601,8 @@ func (rf *Raft) needReplicate(peer int) bool {
 	rf.mu.Lock()
 	// rf.Debug(dWarn, "needReplicate: acquired mu.Lock")
 	defer rf.mu.Unlock()
-	if peer != rf.me {
-		return false
-	}
-	rf.Debug(dTrace, "needReplicate: matchIndex[%d]=%d  log tail %+v", peer, rf.matchIndex[peer], rf.GetLogTail())
-	return rf.state == Leader && rf.matchIndex[peer] < rf.GetLogTail().Index
+	rf.Debug(dTrace, "needReplicate: matchIndex[%d]=%d  log tail %+v", peer, rf.matchIndex[peer], rf.LogTail())
+	return rf.state == Leader && peer != rf.me && rf.matchIndex[peer] < rf.LogTail().Index
 }
 
 // Replicate must be called W/O rf.mu held.
@@ -607,11 +614,18 @@ func (rf *Raft) Replicate(peer int) {
 		entry := *rf.log[j]
 		entries = append(entries, &entry)
 	}
+	prevLogIndex := 0
+	prevLogTerm := 0
+	if nextIndex-1 > 0 {
+		prevLogIndex = rf.log[nextIndex-1].Index
+		prevLogTerm = rf.log[nextIndex-1].Term
+		rf.Debug(dWarn, "replicate S%d nextIndex=%v matchIndex=%v prevLog: %v", peer, rf.nextIndex, rf.matchIndex, rf.GetLogAtIndex(prevLogIndex))
+	}
 	args := &AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
-		PrevLogIndex: rf.log[nextIndex-1].Index,
-		PrevLogTerm:  rf.log[nextIndex-1].Term,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
 		LeaderCommit: rf.commitIndex,
 		Entries:      entries,
 	}
@@ -669,7 +683,8 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				rf.applyCond.Broadcast()
 			}
 		} else {
-			// TODO: handle conflict
+			rf.matchIndex[peer] = 0
+			rf.nextIndex[peer] = reply.ConflictingIndex + 1
 		}
 	}
 }
@@ -701,7 +716,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	})
 	rf.matchIndex[rf.me] += 1
-	rf.Debug(dClient, "client start replication with log %s", rf.FormatLog())
+	rf.Debug(dClient, "client start replication with log %s  %s", rf.FormatLog(), rf.FormatState())
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}
