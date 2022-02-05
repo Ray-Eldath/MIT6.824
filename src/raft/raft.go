@@ -239,7 +239,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if args.PrevLogIndex > 0 {
 				if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
 					rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
-					// TODO: reply.ConflictingIndex =
 					if prev != nil {
 						if prev.Index-1 > 0 {
 							reply.ConflictingIndex = rf.GetLogAtIndex(prev.Index - 1).Index
@@ -370,7 +369,7 @@ func (rf *Raft) isAtLeastUpToDate(args *RequestVoteArgs) bool {
 		b = args.LastLogTerm >= rf.LogTail().Term
 	}
 	if !b {
-		rf.Debug(dVote, "hands down RequestVote from %d", args.CandidateId)
+		rf.Debug(dVote, "hands down RequestVote from S%d  %+v current log: %s", args.CandidateId, args, rf.FormatLog())
 	}
 	return b
 }
@@ -475,6 +474,7 @@ func (rf *Raft) DoElection() {
 								rf.nextIndex[i] = rf.LogTail().Index + 1
 								rf.matchIndex[i] = 0
 							}
+							rf.matchIndex[rf.me] = rf.LogTail().Index
 							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
 							rf.BroadcastHeartbeat()
 							rf.state = Leader
@@ -493,7 +493,7 @@ func (rf *Raft) BroadcastHeartbeat() {
 	rf.Debug(dHeartbeat, "heartbeat start")
 	term := rf.term
 	leaderId := rf.me
-	leaderCommit := rf.commitIndex
+	// leaderCommit := rf.commitIndex
 	// for i := range rf.peers {
 	// 	if i == leaderId {
 	// 		continue
@@ -511,10 +511,10 @@ func (rf *Raft) BroadcastHeartbeat() {
 
 		go func(peer int) {
 			rf.Sync(peer, &AppendEntriesArgs{
-				Term:         term,
-				LeaderId:     leaderId,
-				LeaderCommit: leaderCommit,
-				Entries:      nil,
+				Term:     term,
+				LeaderId: leaderId,
+				// LeaderCommit: leaderCommit,
+				Entries: nil,
 			})
 			// rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
 			// rf.replicateCond[peer].L.Unlock()
@@ -560,7 +560,7 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 
 		rf.mu.Lock()
 		rf.lastApplied += 1
-		toCommit := rf.log[rf.lastApplied]
+		toCommit := *rf.log[rf.lastApplied]
 		rf.Debug(dCommit, "apply rf[%d]=%+v  current log: %s", rf.lastApplied, toCommit, rf.FormatLog())
 		rf.mu.Unlock()
 
