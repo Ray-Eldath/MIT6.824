@@ -105,6 +105,14 @@ type Raft struct {
 	replicateCond []*sync.Cond
 }
 
+func (rf *Raft) IsMajority(vote int) bool {
+	return vote >= rf.Majority()
+}
+
+func (rf *Raft) Majority() int {
+	return len(rf.peers)/2 + 1
+}
+
 func (rf *Raft) GetLogAtIndex(logIndex int) *LogEntry {
 	if len(rf.log) < 2 {
 		return nil
@@ -227,6 +235,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev != nil && prev.Term != args.PrevLogTerm {
 			rf.Debug(dLog, "log consistency check failed. local log at prev: %+v  full log: %v", prev, rf.log)
 			reply.Success = false
+			// prev.Term
 			// reply.ConflictingIndex =
 		} else {
 			if len(args.Entries) > 0 {
@@ -249,6 +258,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 							Index:   entry.Index,
 							Command: entry.Command,
 						})
+						rf.log[0].Index += 1
 					}
 				}
 				rf.Debug(dLog, "after merge: %s", rf.FormatLog())
@@ -259,7 +269,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.commitIndex = Min(args.LeaderCommit, rf.GetLogTail().Index)
 				rf.applyCond.Broadcast()
 			}
-			rf.Debug(dLog, "commitIndex=%d", rf.commitIndex)
+			rf.Debug(dLog, "finish broadcasting applyCond: commitIndex=%d", rf.commitIndex)
 			reply.Success = true
 		}
 	} else if rf.state == Leader {
@@ -445,8 +455,11 @@ func (rf *Raft) DoElection() {
 						vote += 1
 
 						if rf.IsMajority(int(vote)) {
-							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader", vote, len(rf.peers))
 							rf.state = Leader
+							for i = 0; i < len(rf.peers); i++ {
+								rf.nextIndex[i] = rf.GetLogTail().Index + 1
+							}
+							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
 							rf.BroadcastHeartbeat()
 						}
 					}
@@ -505,12 +518,9 @@ func (rf *Raft) BroadcastHeartbeat() {
 func (rf *Raft) DoHeartbeat() {
 	for !rf.killed() {
 		time.Sleep(HeartbeatInterval)
-		rf.mu.Lock()
-		if rf.state != Leader {
-			rf.mu.Unlock()
+		if !rf.needHeartbeat() {
 			continue
 		}
-		rf.mu.Unlock()
 
 		for i := range rf.peers {
 			if i == rf.me {
@@ -521,12 +531,10 @@ func (rf *Raft) DoHeartbeat() {
 	}
 }
 
-func (rf *Raft) IsMajority(vote int) bool {
-	return vote >= rf.Majority()
-}
-
-func (rf *Raft) Majority() int {
-	return len(rf.peers)/2 + 1
+func (rf *Raft) needHeartbeat() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.state == Leader
 }
 
 func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
@@ -543,7 +551,7 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 		rf.mu.Lock()
 		rf.lastApplied += 1
 		toCommit := rf.log[rf.lastApplied]
-		rf.Debug(dCommit, "apply rf[%d]=%+v", rf.lastApplied, toCommit)
+		rf.Debug(dCommit, "apply rf[%d]=%+v  current log: %s", rf.lastApplied, toCommit, rf.FormatLog())
 		rf.mu.Unlock()
 
 		applyCh <- ApplyMsg{
@@ -570,7 +578,6 @@ func (rf *Raft) DoReplicate(peer int) {
 		for !rf.needReplicate(peer) {
 			rf.replicateCond[peer].Wait()
 			if rf.killed() {
-				rf.replicateCond[peer].L.Unlock()
 				return
 			}
 		}
@@ -637,14 +644,14 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 			if len(args.Entries) == 0 {
 				return
 			}
-			entriesTailIndex := LogTail(args.Entries).Index
-			rf.matchIndex[peer] = entriesTailIndex
-			rf.nextIndex[peer] = entriesTailIndex + 1
-			rf.Debug(dHeartbeat, "S%d entriesTailIndex=%d commitIndex=%d matchIndex=%v nextIndex=%v", peer, entriesTailIndex, rf.commitIndex, rf.matchIndex, rf.nextIndex)
+			logTailIndex := LogTail(args.Entries).Index
+			rf.matchIndex[peer] = logTailIndex
+			rf.nextIndex[peer] = logTailIndex + 1
+			rf.Debug(dHeartbeat, "S%d logTailIndex=%d commitIndex=%d matchIndex=%v nextIndex=%v", peer, logTailIndex, rf.commitIndex, rf.matchIndex, rf.nextIndex)
 
 			// update commitIndex
 			preCommitIndex := rf.commitIndex
-			for i := rf.commitIndex; i <= entriesTailIndex; i++ {
+			for i := rf.commitIndex; i <= logTailIndex; i++ {
 				count := 0
 				for p := range rf.peers {
 					if rf.matchIndex[p] >= i {
