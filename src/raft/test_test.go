@@ -389,32 +389,43 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
 
-	cfg.one(rand.Int(), servers, true)
+	cmd := 100
+	cfg.one(cmd, servers, true)
 
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
+	fmt.Printf("disconnect S%d\n", (leader1+2)%servers)
 	cfg.disconnect((leader1 + 2) % servers)
+	fmt.Printf("disconnect S%d\n", (leader1+3)%servers)
 	cfg.disconnect((leader1 + 3) % servers)
+	fmt.Printf("disconnect S%d\n", (leader1+4)%servers)
 	cfg.disconnect((leader1 + 4) % servers)
 
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
-		cfg.rafts[leader1].Start(rand.Int())
+		cmd += 1
+		cfg.rafts[leader1].Start(cmd)
 	}
 
 	time.Sleep(RaftElectionTimeout / 2)
 
+	fmt.Printf("disconnect S%d\n", (leader1+0)%servers)
 	cfg.disconnect((leader1 + 0) % servers)
+	fmt.Printf("disconnect S%d\n", (leader1+1)%servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
 	// allow other partition to recover
+	fmt.Printf("connect S%d\n", (leader1+2)%servers)
 	cfg.connect((leader1 + 2) % servers)
+	fmt.Printf("connect S%d\n", (leader1+3)%servers)
 	cfg.connect((leader1 + 3) % servers)
+	fmt.Printf("connect S%d\n", (leader1+4)%servers)
 	cfg.connect((leader1 + 4) % servers)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
-		cfg.one(rand.Int(), 3, true)
+		cmd += 1
+		cfg.one(cmd, 3, true)
 	}
 
 	// now another partitioned leader and one follower
@@ -423,33 +434,42 @@ func TestBackup2B(t *testing.T) {
 	if leader2 == other {
 		other = (leader2 + 1) % servers
 	}
+	fmt.Printf("disconnect S%d\n", other)
 	cfg.disconnect(other)
 
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
-		cfg.rafts[leader2].Start(rand.Int())
+		cmd += 1
+		cfg.rafts[leader2].Start(cmd)
 	}
 
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
+		fmt.Printf("disconnect S%d\n", i)
 		cfg.disconnect(i)
 	}
+	fmt.Printf("connect S%d\n", (leader1+0)%servers)
 	cfg.connect((leader1 + 0) % servers)
+	fmt.Printf("connect S%d\n", (leader1+1)%servers)
 	cfg.connect((leader1 + 1) % servers)
+	fmt.Printf("connect S%d\n", other)
 	cfg.connect(other)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
-		cfg.one(rand.Int(), 3, true)
+		cmd += 1
+		cfg.one(cmd, 3, true)
 	}
 
 	// now everyone
 	for i := 0; i < servers; i++ {
+		fmt.Printf("connect S%d\n", i)
 		cfg.connect(i)
 	}
-	cfg.one(rand.Int(), servers, true)
+	cmd += 1
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }

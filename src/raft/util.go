@@ -63,7 +63,11 @@ func (rf *Raft) FormatLog() string {
 }
 
 func (rf *Raft) FormatState() string {
-	return fmt.Sprintf("commitIndex=%d lastApplied=%d nextIndex=%v matchIndex=%v  current log: %v", rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, rf.FormatLog())
+	return fmt.Sprintf("%s  current log: %v", rf.FormatStateOnly(), rf.FormatLog())
+}
+
+func (rf *Raft) FormatStateOnly() string {
+	return fmt.Sprintf("commitIndex=%d lastApplied=%d nextIndex=%v matchIndex=%v", rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 }
 
 const Padding = "    "

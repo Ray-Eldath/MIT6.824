@@ -239,9 +239,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
 				rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
 				if prev != nil {
-					if prev.Index-1 > 0 {
-						reply.ConflictingIndex = rf.GetLogAtIndex(prev.Index - 1).Index
-						reply.ConflictingTerm = rf.GetLogAtIndex(prev.Index - 1).Term
+					conflictingIndex := prev.Index
+					for i := prev.Index; i >= 1; i-- {
+						if rf.log[i].Term == prev.Term {
+							conflictingIndex = rf.log[i].Index
+						} else {
+							break
+						}
+					}
+					if conflictingIndex > 1 {
+						reply.ConflictingIndex = rf.GetLogAtIndex(conflictingIndex - 1).Index
+						reply.ConflictingTerm = rf.GetLogAtIndex(reply.ConflictingIndex).Term
 					} else {
 						reply.ConflictingIndex = 0
 						reply.ConflictingTerm = 0 // TODO: may fail here!
@@ -605,8 +613,9 @@ func (rf *Raft) needReplicate(peer int) bool {
 	rf.mu.Lock()
 	// rf.Debug(dWarn, "needReplicate: acquired mu.Lock")
 	defer rf.mu.Unlock()
-	rf.Debug(dTrace, "needReplicate: matchIndex[%d]=%d  log tail %+v", peer, rf.matchIndex[peer], rf.LogTail())
-	return rf.state == Leader && peer != rf.me && rf.matchIndex[peer] < rf.LogTail().Index
+	nextIndex := rf.nextIndex[peer]
+	rf.Debug(dTrace, "needReplicate: nextIndex=%v  log tail %+v", rf.nextIndex, rf.LogTail())
+	return rf.state == Leader && peer != rf.me && rf.GetLogAtIndex(nextIndex) != nil && rf.LogTail().Index > nextIndex
 }
 
 // Replicate must be called W/O rf.mu held.
@@ -720,7 +729,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	})
 	rf.matchIndex[rf.me] += 1
-	rf.Debug(dClient, "client start replication with log %s  %s", rf.FormatLog(), rf.FormatState())
+	rf.Debug(dClient, "client start replication with log %s  %s", rf.FormatLog(), rf.FormatStateOnly())
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}
