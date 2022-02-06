@@ -401,7 +401,7 @@ func TestBackup2B(t *testing.T) {
 	fmt.Printf("disconnect S%d\n", (leader1+4)%servers)
 	cfg.disconnect((leader1 + 4) % servers)
 
-	// submit lots of commands that won't commit
+	// submit lots of commands that won't commit: 101-150
 	for i := 0; i < 50; i++ {
 		cmd += 1
 		cfg.rafts[leader1].Start(cmd)
@@ -422,7 +422,7 @@ func TestBackup2B(t *testing.T) {
 	fmt.Printf("connect S%d\n", (leader1+4)%servers)
 	cfg.connect((leader1 + 4) % servers)
 
-	// lots of successful commands to new group.
+	// lots of successful commands to new group: 151-200
 	for i := 0; i < 50; i++ {
 		cmd += 1
 		cfg.one(cmd, 3, true)
@@ -437,7 +437,7 @@ func TestBackup2B(t *testing.T) {
 	fmt.Printf("disconnect S%d\n", other)
 	cfg.disconnect(other)
 
-	// lots more commands that won't commit
+	// lots more commands that won't commit: 201-250
 	for i := 0; i < 50; i++ {
 		cmd += 1
 		cfg.rafts[leader2].Start(cmd)
@@ -457,13 +457,13 @@ func TestBackup2B(t *testing.T) {
 	fmt.Printf("connect S%d\n", other)
 	cfg.connect(other)
 
-	// lots of successful commands to new group.
+	// lots of successful commands to new group: 251-300
 	for i := 0; i < 50; i++ {
 		cmd += 1
 		cfg.one(cmd, 3, true)
 	}
 
-	// now everyone
+	// now everyone: 301
 	for i := 0; i < servers; i++ {
 		fmt.Printf("connect S%d\n", i)
 		cfg.connect(i)

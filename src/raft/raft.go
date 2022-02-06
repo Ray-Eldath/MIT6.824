@@ -621,6 +621,10 @@ func (rf *Raft) needReplicate(peer int) bool {
 // Replicate must be called W/O rf.mu held.
 func (rf *Raft) Replicate(peer int) {
 	rf.mu.Lock()
+	if rf.state != Leader {
+		rf.mu.Unlock()
+		return
+	}
 	var entries []*LogEntry
 	nextIndex := rf.nextIndex[peer]
 	for j := nextIndex; j < len(rf.log); j++ {
