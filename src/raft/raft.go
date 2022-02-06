@@ -235,27 +235,27 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, reset rf.term", args.Term, rf.term, args.LeaderId)
 			rf.resetTerm(args.Term)
 		}
-		if len(args.Entries) > 0 {
-			if args.PrevLogIndex > 0 {
-				if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
-					rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
-					if prev != nil {
-						if prev.Index-1 > 0 {
-							reply.ConflictingIndex = rf.GetLogAtIndex(prev.Index - 1).Index
-							reply.ConflictingTerm = rf.GetLogAtIndex(prev.Index - 1).Term
-						} else {
-							reply.ConflictingIndex = 0
-							reply.ConflictingTerm = 0 // TODO: may fail here!
-						}
+		if args.PrevLogIndex > 0 {
+			if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
+				rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
+				if prev != nil {
+					if prev.Index-1 > 0 {
+						reply.ConflictingIndex = rf.GetLogAtIndex(prev.Index - 1).Index
+						reply.ConflictingTerm = rf.GetLogAtIndex(prev.Index - 1).Term
 					} else {
-						reply.ConflictingTerm = rf.LogTail().Index
-						reply.ConflictingTerm = rf.LogTail().Term
+						reply.ConflictingIndex = 0
+						reply.ConflictingTerm = 0 // TODO: may fail here!
 					}
-					reply.Success = false
-
-					return
+				} else {
+					reply.ConflictingTerm = rf.LogTail().Index
+					reply.ConflictingTerm = rf.LogTail().Term
 				}
+				reply.Success = false
+
+				return
 			}
+		}
+		if len(args.Entries) > 0 {
 			// if pass log consistency check, do merge
 			rf.Debug(dLog, "before merge: %s", rf.FormatLog())
 			for _, entry := range args.Entries {
@@ -275,9 +275,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 						Index:   entry.Index,
 						Command: entry.Command,
 					})
-					rf.log[0].Index += 1
 				}
 			}
+			argsTailIndex := LogTail(args.Entries).Index
+			if rf.LogTail().Index > argsTailIndex {
+				rf.log = rf.log[:argsTailIndex]
+			}
+			rf.log[0].Index = rf.LogTail().Index
 			rf.Debug(dLog, "after merge: %s", rf.FormatLog())
 		}
 		// trigger apply
