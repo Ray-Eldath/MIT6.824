@@ -29,7 +29,6 @@ import (
 	"6.824/labrpc"
 )
 
-
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -151,17 +150,14 @@ func (rf *Raft) resetTerm(term int) {
 
 func (rf *Raft) becomeFollower() {
 	rf.state = Follower
-	rf.persist()
 }
 
 func (rf *Raft) becomeCandidate() {
 	rf.state = Candidate
-	rf.persist()
 }
 
 func (rf *Raft) becomeLeader() {
 	rf.state = Leader
-	rf.persist()
 }
 
 // return currentTerm and whether this server
@@ -185,15 +181,12 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	_ = e.Encode(rf.state)
 	_ = e.Encode(rf.term)
 	_ = e.Encode(rf.votedFor)
 	_ = e.Encode(rf.log)
-	rf.Debug(dPersist, "persist: [%v t%d] votedFor=S%d  current log: %v", rf.state, rf.term, rf.votedFor, rf.FormatLog())
+	rf.Debug(dPersist, "persist: %s", rf.FormatState())
 	rf.persister.SaveRaftState(w.Bytes())
 }
-
-
 
 //
 // restore previously persisted state.
@@ -204,15 +197,11 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	var state State
 	var term int
 	var votedFor int
 	var log []*LogEntry
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if e := d.Decode(&state); e != nil {
-		panic(e)
-	}
 	if e := d.Decode(&term); e != nil {
 		panic(e)
 	}
@@ -223,8 +212,7 @@ func (rf *Raft) readPersist(data []byte) {
 		panic(e)
 	}
 
-	rf.Debug(dPersist, "readPersist: [%v t%d] votedFor=S%d  current log: %v", state, term, votedFor, log)
-	rf.state = state
+	rf.Debug(dPersist, "readPersist: t%d votedFor=S%d  current log: %v", term, votedFor, log)
 	rf.term = term
 	rf.votedFor = votedFor
 	rf.log = log
@@ -424,6 +412,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isAtLeastUpToDate(args) {
 		rf.votedFor = args.CandidateId
+		rf.persist()
 		rf.lastHeartbeat = now
 		reply.VoteGranted = true
 	} else {
@@ -865,7 +854,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
 
 	return rf
 }
