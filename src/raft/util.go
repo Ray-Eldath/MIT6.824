@@ -54,6 +54,22 @@ func init() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 }
 
+func (rf *Raft) FormatLog() string {
+	s := ""
+	for i := 1; i < len(rf.log); i++ {
+		s += fmt.Sprintf("%v ", rf.log[i])
+	}
+	return s
+}
+
+func (rf *Raft) FormatState() string {
+	return fmt.Sprintf("%s  current log: %v", rf.FormatStateOnly(), rf.FormatLog())
+}
+
+func (rf *Raft) FormatStateOnly() string {
+	return fmt.Sprintf("commitIndex=%d lastApplied=%d nextIndex=%v matchIndex=%v", rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+}
+
 const Padding = "    "
 
 func (rf *Raft) Debug(topic logTopic, format string, a ...interface{}) {

@@ -60,21 +60,25 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
+	fmt.Printf("disconnect S%d\n", leader1)
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
+	fmt.Printf("rejoin")
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no leader should
 	// be elected.
+	println("no quorum")
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
 
+	println("rejoin quorum")
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
@@ -188,6 +192,8 @@ func TestFailAgree2B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
+	i := (leader + 1) % servers
+	fmt.Printf("disconnect one follower %d from leader %d\n", i, leader)
 	cfg.disconnect((leader + 1) % servers)
 
 	// the leader and remaining follower should be
@@ -199,11 +205,13 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.one(105, servers-1, false)
 
 	// re-connect
+	fmt.Printf("reconnect %d\n", i)
 	cfg.connect((leader + 1) % servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
 	// on new commands.
+	println("new commands")
 	cfg.one(106, servers, true)
 	time.Sleep(RaftElectionTimeout)
 	cfg.one(107, servers, true)
@@ -374,6 +382,7 @@ func TestRejoin2B(t *testing.T) {
 
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
+	fmt.Printf("leader1 disconnect S%d\n", leader1)
 	cfg.disconnect(leader1)
 
 	// make old leader try to agree on some entries
@@ -386,14 +395,17 @@ func TestRejoin2B(t *testing.T) {
 
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
+	fmt.Printf("leader2 disconnect S%d\n", leader2)
 	cfg.disconnect(leader2)
 
 	// old leader connected again
+	fmt.Printf("leader1 reconnect S%d\n", leader1)
 	cfg.connect(leader1)
 
 	cfg.one(104, 2, true)
 
 	// all together now
+	fmt.Printf("leader2 reconnect S%d\n", leader2)
 	cfg.connect(leader2)
 
 	cfg.one(105, servers, true)
@@ -408,32 +420,43 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
 
-	cfg.one(rand.Int(), servers, true)
+	cmd := 100
+	cfg.one(cmd, servers, true)
 
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
+	fmt.Printf("disconnect S%d\n", (leader1+2)%servers)
 	cfg.disconnect((leader1 + 2) % servers)
+	fmt.Printf("disconnect S%d\n", (leader1+3)%servers)
 	cfg.disconnect((leader1 + 3) % servers)
+	fmt.Printf("disconnect S%d\n", (leader1+4)%servers)
 	cfg.disconnect((leader1 + 4) % servers)
 
-	// submit lots of commands that won't commit
+	// submit lots of commands that won't commit: 101-150
 	for i := 0; i < 50; i++ {
-		cfg.rafts[leader1].Start(rand.Int())
+		cmd += 1
+		cfg.rafts[leader1].Start(cmd)
 	}
 
 	time.Sleep(RaftElectionTimeout / 2)
 
+	fmt.Printf("disconnect S%d\n", (leader1+0)%servers)
 	cfg.disconnect((leader1 + 0) % servers)
+	fmt.Printf("disconnect S%d\n", (leader1+1)%servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
 	// allow other partition to recover
+	fmt.Printf("connect S%d\n", (leader1+2)%servers)
 	cfg.connect((leader1 + 2) % servers)
+	fmt.Printf("connect S%d\n", (leader1+3)%servers)
 	cfg.connect((leader1 + 3) % servers)
+	fmt.Printf("connect S%d\n", (leader1+4)%servers)
 	cfg.connect((leader1 + 4) % servers)
 
-	// lots of successful commands to new group.
+	// lots of successful commands to new group: 151-200
 	for i := 0; i < 50; i++ {
-		cfg.one(rand.Int(), 3, true)
+		cmd += 1
+		cfg.one(cmd, 3, true)
 	}
 
 	// now another partitioned leader and one follower
@@ -442,33 +465,42 @@ func TestBackup2B(t *testing.T) {
 	if leader2 == other {
 		other = (leader2 + 1) % servers
 	}
+	fmt.Printf("disconnect S%d\n", other)
 	cfg.disconnect(other)
 
-	// lots more commands that won't commit
+	// lots more commands that won't commit: 201-250
 	for i := 0; i < 50; i++ {
-		cfg.rafts[leader2].Start(rand.Int())
+		cmd += 1
+		cfg.rafts[leader2].Start(cmd)
 	}
 
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
+		fmt.Printf("disconnect S%d\n", i)
 		cfg.disconnect(i)
 	}
+	fmt.Printf("connect S%d\n", (leader1+0)%servers)
 	cfg.connect((leader1 + 0) % servers)
+	fmt.Printf("connect S%d\n", (leader1+1)%servers)
 	cfg.connect((leader1 + 1) % servers)
+	fmt.Printf("connect S%d\n", other)
 	cfg.connect(other)
 
-	// lots of successful commands to new group.
+	// lots of successful commands to new group: 251-300
 	for i := 0; i < 50; i++ {
-		cfg.one(rand.Int(), 3, true)
+		cmd += 1
+		cfg.one(cmd, 3, true)
 	}
 
-	// now everyone
+	// now everyone: 301
 	for i := 0; i < servers; i++ {
+		fmt.Printf("connect S%d\n", i)
 		cfg.connect(i)
 	}
-	cfg.one(rand.Int(), servers, true)
+	cmd += 1
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }
