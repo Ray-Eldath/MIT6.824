@@ -762,37 +762,49 @@ func TestFigure82C(t *testing.T) {
 
 	cfg.begin("Test (2C): Figure 8")
 
-	cfg.one(rand.Int(), 1, true)
+	cmd := 1
+	cfg.one(cmd, 1, true)
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
 		leader := -1
 		for i := 0; i < servers; i++ {
 			if cfg.rafts[i] != nil {
-				_, _, ok := cfg.rafts[i].Start(rand.Int())
+				cmd += 1 // 2
+				_, _, ok := cfg.rafts[i].Start(cmd)
 				if ok {
 					leader = i
 				}
 			}
 		}
 
+		quickly := false
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		} else {
+			quickly = true
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if leader != -1 {
+			if quickly {
+				fmt.Printf("crash1 S%d quickly (perhaps without committing the command)\n", leader)
+			} else {
+				fmt.Printf("crash1 S%d after a while (most likely committing the command)\n", leader)
+			}
 			cfg.crash1(leader)
 			nup -= 1
 		}
 
 		if nup < 3 {
+			fmt.Printf("nup=%d < 3, cannot form majority. start a server\n", nup)
 			s := rand.Int() % servers
 			if cfg.rafts[s] == nil {
+				fmt.Printf("start1 S%d\n", s)
 				cfg.start1(s, cfg.applier)
+				fmt.Printf("connect S%d\n", s)
 				cfg.connect(s)
 				nup += 1
 			}
@@ -806,7 +818,8 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int(), servers, true)
+	cmd += 1
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }
