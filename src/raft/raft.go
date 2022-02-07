@@ -18,14 +18,14 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
 	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -98,7 +98,7 @@ type Raft struct {
 	// state a Raft server must maintain.
 	state           State
 	term            int
-	votedFor        *int
+	votedFor        int
 	log             []*LogEntry
 	lastHeartbeat   time.Time
 	electionTimeout time.Duration
@@ -145,7 +145,23 @@ func LogTail(xs []*LogEntry) *LogEntry {
 
 func (rf *Raft) resetTerm(term int) {
 	rf.term = term
-	rf.votedFor = nil
+	rf.votedFor = -1
+	rf.persist()
+}
+
+func (rf *Raft) becomeFollower() {
+	rf.state = Follower
+	rf.persist()
+}
+
+func (rf *Raft) becomeCandidate() {
+	rf.state = Candidate
+	rf.persist()
+}
+
+func (rf *Raft) becomeLeader() {
+	rf.state = Leader
+	rf.persist()
 }
 
 // return currentTerm and whether this server
@@ -167,15 +183,16 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	_ = e.Encode(rf.state)
+	_ = e.Encode(rf.term)
+	_ = e.Encode(rf.votedFor)
+	_ = e.Encode(rf.log)
+	rf.Debug(dPersist, "persist: [%v t%d] votedFor=S%d  current log: %v", rf.state, rf.term, rf.votedFor, rf.FormatLog())
+	rf.persister.SaveRaftState(w.Bytes())
 }
+
 
 
 //
@@ -185,19 +202,32 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var state State
+	var term int
+	var votedFor int
+	var log []*LogEntry
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if e := d.Decode(&state); e != nil {
+		panic(e)
+	}
+	if e := d.Decode(&term); e != nil {
+		panic(e)
+	}
+	if e := d.Decode(&votedFor); e != nil {
+		panic(e)
+	}
+	if e := d.Decode(&log); e != nil {
+		panic(e)
+	}
+
+	rf.Debug(dPersist, "readPersist: [%v t%d] votedFor=S%d  current log: %v", state, term, votedFor, log)
+	rf.state = state
+	rf.term = term
+	rf.votedFor = votedFor
+	rf.log = log
 }
 
 type AppendEntriesArgs struct {
@@ -251,7 +281,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.state == Candidate {
 		if args.Term >= rf.term {
 			rf.Debug(dLog, "received term %d >= currentTerm %d from S%d, leader is legitimate", args.Term, rf.term, args.LeaderId)
-			rf.state = Follower
+			rf.becomeFollower()
 			rf.resetTerm(args.Term)
 			reply.Success = true
 		}
@@ -318,6 +348,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			}
 			rf.log[0].Index = rf.LogTail().Index
 			rf.Debug(dLog, "after merge: %s", rf.FormatLog())
+			rf.persist()
 		}
 		// trigger apply
 		if args.LeaderCommit > rf.commitIndex {
@@ -329,7 +360,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else if rf.state == Leader {
 		if args.Term > rf.term {
 			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, back to Follower", args.Term, rf.term, args.LeaderId)
-			rf.state = Follower
+			rf.becomeFollower()
 			rf.resetTerm(args.Term)
 			reply.Success = true
 		}
@@ -376,10 +407,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.Term = rf.term
-	if rf.votedFor == nil {
+	if rf.votedFor == -1 {
 		rf.Debug(dVote, "S%d RequestVote %+v votedFor=<nil>", args.CandidateId, args)
 	} else {
-		rf.Debug(dVote, "S%d RequestVote %+v votedFor=S%d", args.CandidateId, args, *rf.votedFor)
+		rf.Debug(dVote, "S%d RequestVote %+v votedFor=S%d", args.CandidateId, args, rf.votedFor)
 	}
 	if args.Term < rf.term {
 		reply.VoteGranted = false
@@ -388,11 +419,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term > rf.term {
 		rf.Debug(dVote, "received term %d > currentTerm %d, back to Follower", args.Term, rf.term)
-		rf.state = Follower
+		rf.becomeFollower()
 		rf.resetTerm(args.Term)
 	}
-	if (rf.votedFor == nil || *rf.votedFor == args.CandidateId) && rf.isAtLeastUpToDate(args) {
-		rf.votedFor = &args.CandidateId
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isAtLeastUpToDate(args) {
+		rf.votedFor = args.CandidateId
 		rf.lastHeartbeat = now
 		reply.VoteGranted = true
 	} else {
@@ -468,9 +499,10 @@ func (rf *Raft) DoElection() {
 		}
 		if time.Since(rf.lastHeartbeat) >= rf.electionTimeout {
 			rf.electionTimeout = NextElectionTimeout()
-			rf.term += 1
-			rf.state = Candidate
-			rf.votedFor = &rf.me
+			rf.resetTerm(rf.term + 1)
+			rf.becomeCandidate()
+			rf.votedFor = rf.me
+			rf.persist()
 			rf.Debug(dElection, "electionTimeout %dms elapsed, turning to Candidate", rf.electionTimeout/time.Millisecond)
 
 			args := &RequestVoteArgs{
@@ -500,7 +532,7 @@ func (rf *Raft) DoElection() {
 					}
 					if reply.Term > rf.term {
 						rf.Debug(dElection, "return to Follower due to reply.Term > rf.term")
-						rf.state = Follower
+						rf.becomeFollower()
 						rf.resetTerm(reply.Term)
 						return
 					}
@@ -516,7 +548,7 @@ func (rf *Raft) DoElection() {
 							rf.matchIndex[rf.me] = rf.LogTail().Index
 							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
 							rf.BroadcastHeartbeat()
-							rf.state = Leader
+							rf.becomeLeader()
 						}
 					}
 				}(i, args)
@@ -695,7 +727,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 	}
 	if reply.Term > rf.term {
 		rf.Debug(dHeartbeat, "return to Follower due to reply.Term > rf.term")
-		rf.state = Follower
+		rf.becomeFollower()
 		rf.resetTerm(reply.Term)
 	} else {
 		if reply.Success {
@@ -759,6 +791,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Index:   rf.log[0].Index,
 		Command: command,
 	})
+	rf.persist()
 	rf.matchIndex[rf.me] += 1
 	rf.Debug(dClient, "client start replication with log %s  %s", rf.FormatLog(), rf.FormatStateOnly())
 	for i := range rf.peers {
@@ -805,6 +838,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.votedFor = -1
 	rf.applyCond = sync.NewCond(&sync.Mutex{})
 
 	rf.electionTimeout = NextElectionTimeout()
