@@ -125,13 +125,17 @@ func (rf *Raft) GetLogAtIndex(logIndex int) *LogEntry {
 	if logIndex < 1 {
 		panic("logIndex < 1")
 	}
-	logicalLogSubscript := logIndex - rf.log[1].Index
-	subscript := logicalLogSubscript + 1
+	subscript := rf.LogIndexToSubscript(logIndex)
 	if len(rf.log) > subscript {
 		return rf.log[subscript]
 	} else {
 		return nil
 	}
+}
+
+func (rf *Raft) LogIndexToSubscript(logIndex int) int {
+	logicalLogSubscript := logIndex - rf.log[1].Index
+	return logicalLogSubscript + 1
 }
 
 func (rf *Raft) LogTail() *LogEntry {
@@ -311,28 +315,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if len(args.Entries) > 0 {
 			// if pass log consistency check, do merge
 			rf.Debug(dLog, "before merge: %s", rf.FormatLog())
-			for _, entry := range args.Entries {
-				local := rf.GetLogAtIndex(entry.Index)
-				if local != nil {
+			appendLeft := 0
+			for i, entry := range args.Entries {
+				if local := rf.GetLogAtIndex(entry.Index); local != nil {
 					if local.Index != entry.Index {
-						panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  local log at entry.Index: %+v", rf.log[1].Index, local))
+						panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  entry: %+v  local log at entry.Index: %+v", rf.log[1].Index, entry, local))
 					}
-					local.Term = entry.Term
-					local.Command = entry.Command
-				} else {
-					// if rf.log[len(rf.log)-1].Index+1 != entry.Index {
-					// 	panic(rf.Sdebug(dFatal, "rf.log[len(rf.log)-1].Index+1 != entry.Index. headIndex=%d", rf.log[1].Index))
-					// }
-					rf.log = append(rf.log, &LogEntry{
-						Term:    entry.Term,
-						Index:   entry.Index,
-						Command: entry.Command,
-					})
+					if local.Term != entry.Term {
+						rf.Debug(dLog, "merge conflict at %d", i)
+						rf.log = rf.log[:rf.LogIndexToSubscript(entry.Index)]
+						appendLeft = i
+						break
+					}
+					appendLeft = i + 1
 				}
 			}
-			argsTailIndex := LogTail(args.Entries).Index
-			if rf.LogTail().Index > argsTailIndex {
-				rf.log = rf.log[:argsTailIndex]
+			for i := appendLeft; i < len(args.Entries); i++ {
+				entry := *args.Entries[i]
+				rf.log = append(rf.log, &entry)
 			}
 			rf.log[0].Index = rf.LogTail().Index
 			rf.Debug(dLog, "after merge: %s", rf.FormatLog())
