@@ -799,9 +799,9 @@ func TestFigure82C(t *testing.T) {
 		}
 
 		if nup < 3 {
-			fmt.Printf("nup=%d < 3, cannot form majority. start a server\n", nup)
 			s := rand.Int() % servers
 			if cfg.rafts[s] == nil {
+				fmt.Printf("nup=%d < 3, cannot form majority. start a server\n", nup)
 				fmt.Printf("start1 S%d\n", s)
 				cfg.start1(s, cfg.applier)
 				fmt.Printf("connect S%d\n", s)
@@ -898,9 +898,9 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 
 		if nup < 3 {
-			fmt.Printf("nup=%d < 3, cannot form majority. reconnect a server\n", nup)
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
+				fmt.Printf("nup=%d < 3, cannot form majority. reconnect a server\n", nup)
 				fmt.Printf("connect S%d\n", s)
 				cfg.connect(s)
 				nup += 1
