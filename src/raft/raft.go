@@ -628,7 +628,7 @@ func (rf *Raft) needApply() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.Debug(dTrace, "needApply: commitIndex=%d lastApplied=%d", rf.commitIndex, rf.lastApplied)
-	return rf.state != Candidate && rf.commitIndex > rf.lastApplied
+	return rf.commitIndex > rf.lastApplied
 }
 
 func (rf *Raft) DoReplicate(peer int) {
