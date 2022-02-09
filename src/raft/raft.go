@@ -288,24 +288,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
 				rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
 				if prev != nil {
-					conflictingIndex := prev.Index
-					for i := prev.Index; i >= 1; i-- {
-						if rf.log[i].Term == prev.Term {
-							conflictingIndex = rf.log[i].Index
-						} else {
+					for _, entry := range rf.log {
+						if entry.Term == prev.Term {
+							reply.ConflictingIndex = entry.Index
 							break
 						}
 					}
-					if conflictingIndex > 1 {
-						reply.ConflictingIndex = rf.GetLogAtIndex(conflictingIndex - 1).Index
-						reply.ConflictingTerm = rf.GetLogAtIndex(reply.ConflictingIndex).Term
-					} else {
-						reply.ConflictingIndex = 0
-						reply.ConflictingTerm = 0 // TODO: may fail here!
-					}
+					reply.ConflictingTerm = prev.Term
 				} else {
 					reply.ConflictingIndex = rf.LogTail().Index
-					reply.ConflictingTerm = rf.LogTail().Term
+					reply.ConflictingTerm = 0
 				}
 				reply.Success = false
 
@@ -749,7 +741,16 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 			}
 		} else {
 			rf.matchIndex[peer] = 0
-			rf.nextIndex[peer] = reply.ConflictingIndex + 1
+
+			if reply.ConflictingTerm > 0 {
+				for i := len(rf.log) - 1; i >= 1; i-- {
+					if rf.log[i].Term == reply.ConflictingTerm {
+						rf.nextIndex[peer] = rf.log[i].Index + 1
+						return
+					}
+				}
+			}
+			rf.nextIndex[peer] = reply.ConflictingIndex
 		}
 	}
 }
