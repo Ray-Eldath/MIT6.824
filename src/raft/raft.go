@@ -750,17 +750,20 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				rf.applyCond.Broadcast()
 			}
 		} else {
+			nextIndex := rf.nextIndex[peer]
 			rf.matchIndex[peer] = 0
 
 			if reply.ConflictingTerm > 0 {
 				for i := len(rf.log) - 1; i >= 1; i-- {
 					if rf.log[i].Term == reply.ConflictingTerm {
-						rf.nextIndex[peer] = rf.log[i].Index + 1
+						rf.nextIndex[peer] = Min(nextIndex, rf.log[i].Index+1)
+						rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d", peer, nextIndex, rf.nextIndex[peer])
 						return
 					}
 				}
 			}
 			rf.nextIndex[peer] = Max(reply.ConflictingIndex, 1)
+			rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d", peer, nextIndex, rf.nextIndex[peer])
 		}
 	}
 }
