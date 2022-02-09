@@ -188,7 +188,7 @@ func (rf *Raft) persist() {
 	_ = e.Encode(rf.term)
 	_ = e.Encode(rf.votedFor)
 	_ = e.Encode(rf.log)
-	rf.Debug(dPersist, "persist: %s", rf.FormatState())
+	rf.Debug(dPersist, "persist: %s", rf.FormatStateOnly())
 	rf.persister.SaveRaftState(w.Bytes())
 }
 
@@ -613,7 +613,7 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 		rf.mu.Lock()
 		rf.lastApplied += 1
 		toCommit := *rf.log[rf.lastApplied]
-		rf.Debug(dCommit, "apply rf[%d]=%+v  current log: %s", rf.lastApplied, toCommit, rf.FormatLog())
+		rf.Debug(dCommit, "apply rf[%d]=%+v", rf.lastApplied, toCommit)
 		rf.mu.Unlock()
 
 		applyCh <- ApplyMsg{
@@ -776,14 +776,15 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 	rf.log[0].Index += 1
-	rf.log = append(rf.log, &LogEntry{
+	entry := LogEntry{
 		Term:    rf.term,
 		Index:   rf.log[0].Index,
 		Command: command,
-	})
+	}
+	rf.log = append(rf.log, &entry)
 	rf.persist()
 	rf.matchIndex[rf.me] += 1
-	rf.Debug(dClient, "client start replication with log %s  %s", rf.FormatLog(), rf.FormatStateOnly())
+	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatStateOnly())
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}

@@ -819,6 +819,7 @@ func TestFigure82C(t *testing.T) {
 	}
 
 	cmd += 1
+	fmt.Printf("one %d\n", cmd)
 	cfg.one(cmd, servers, true)
 
 	cfg.end()
