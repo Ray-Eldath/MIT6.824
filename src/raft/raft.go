@@ -359,6 +359,14 @@ func Min(a int, b int) int {
 	}
 }
 
+func Max(a int, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
+}
+
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
@@ -750,7 +758,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 					}
 				}
 			}
-			rf.nextIndex[peer] = reply.ConflictingIndex
+			rf.nextIndex[peer] = Max(reply.ConflictingIndex, 1)
 		}
 	}
 }
