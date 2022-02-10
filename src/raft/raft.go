@@ -275,7 +275,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.Debug(dLog, "received term %d >= currentTerm %d from S%d, leader is legitimate", args.Term, rf.term, args.LeaderId)
 			rf.becomeFollower()
 			rf.resetTerm(args.Term)
-			reply.Success = false
+			reply.Success = true
 		}
 	} else if rf.state == Follower {
 		rf.Debug(dLog, "receive AppendEntries from S%d args.term=%d %+v", args.LeaderId, args.Term, args)
@@ -342,7 +342,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, back to Follower", args.Term, rf.term, args.LeaderId)
 			rf.becomeFollower()
 			rf.resetTerm(args.Term)
-			reply.Success = false
+			reply.Success = true
 		}
 	}
 }
@@ -712,7 +712,6 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 	defer rf.mu.Unlock()
 	rf.Debug(dHeartbeat, "S%d AppendEntriesReply %+v rf.term=%d args.Term=%d", peer, reply, rf.term, args.Term)
 	if rf.term != args.Term {
-		rf.Debug(dHeartbeat, "S%d AppendEntriesReply rejected since rf.term(%d) != args.Term(%d)", rf.term, args.Term)
 		return
 	}
 	if reply.Term > rf.term {
@@ -742,7 +741,6 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 					preCommitIndex = i
 				}
 			}
-			rf.Debug(dHeartbeat, "S%d old_commitIndex: %d new_commitIndex: %d", peer, rf.commitIndex, preCommitIndex)
 			rf.commitIndex = preCommitIndex
 
 			// trigger DoApply
@@ -797,7 +795,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, &entry)
 	rf.persist()
 	rf.matchIndex[rf.me] += 1
-	rf.Debug(dClient, "client start replication with entry %v  full log: %v", entry, rf.FormatState())
+	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatStateOnly())
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}
