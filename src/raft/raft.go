@@ -712,6 +712,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 	defer rf.mu.Unlock()
 	rf.Debug(dHeartbeat, "S%d AppendEntriesReply %+v rf.term=%d args.Term=%d", peer, reply, rf.term, args.Term)
 	if rf.term != args.Term {
+		rf.Debug(dHeartbeat, "S%d AppendEntriesReply rejected since rf.term(%d) != args.Term(%d)", rf.term, args.Term)
 		return
 	}
 	if reply.Term > rf.term {
@@ -748,6 +749,9 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				rf.applyCond.Broadcast()
 			}
 		} else {
+			if reply.ConflictingIndex == 0 && reply.ConflictingTerm == 0 {
+				return
+			}
 			nextIndex := rf.nextIndex[peer]
 			rf.matchIndex[peer] = 0
 
