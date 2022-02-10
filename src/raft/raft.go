@@ -544,7 +544,7 @@ func (rf *Raft) DoElection() {
 func (rf *Raft) BroadcastHeartbeat() {
 	rf.Debug(dHeartbeat, "BroadcastHeartbeat start")
 	// term := rf.term
-	leaderId := rf.me
+	// leaderId := rf.me
 	// leaderCommit := rf.commitIndex
 	// for i := range rf.peers {
 	// 	if i == leaderId {
@@ -557,7 +557,7 @@ func (rf *Raft) BroadcastHeartbeat() {
 	rf.mu.Unlock()
 
 	for i := range rf.peers {
-		if i == leaderId {
+		if i == rf.me {
 			continue
 		}
 
@@ -574,12 +574,9 @@ func (rf *Raft) DoHeartbeat() {
 			continue
 		}
 
-		for i := range rf.peers {
-			if i == rf.me {
-				continue
-			}
-			go rf.Replicate(i)
-		}
+		rf.mu.Lock()
+		rf.BroadcastHeartbeat()
+		rf.mu.Unlock()
 	}
 }
 
