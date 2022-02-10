@@ -270,81 +270,73 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	rf.lastHeartbeat = now
 
-	if rf.state == Candidate {
-		if args.Term >= rf.term {
-			rf.Debug(dLog, "received term %d >= currentTerm %d from S%d, leader is legitimate", args.Term, rf.term, args.LeaderId)
-			rf.becomeFollower()
-			rf.resetTerm(args.Term)
-			reply.Success = true
-		}
-	} else if rf.state == Follower {
-		rf.Debug(dLog, "receive AppendEntries from S%d args.term=%d %+v", args.LeaderId, args.Term, args)
+	rf.Debug(dLog, "receive AppendEntries from S%d args.term=%d %+v", args.LeaderId, args.Term, args)
+	if rf.state == Candidate && args.Term >= rf.term {
+		rf.Debug(dLog, "received term %d >= currentTerm %d from S%d, leader is legitimate", args.Term, rf.term, args.LeaderId)
+		rf.becomeFollower()
+		rf.resetTerm(args.Term)
+	} else if rf.state == Follower && args.Term > rf.term {
+		rf.Debug(dLog, "received term %d > currentTerm %d from S%d, reset rf.term", args.Term, rf.term, args.LeaderId)
+		rf.resetTerm(args.Term)
+	} else if rf.state == Leader && args.Term > rf.term {
+		rf.Debug(dLog, "received term %d > currentTerm %d from S%d, back to Follower", args.Term, rf.term, args.LeaderId)
+		rf.becomeFollower()
+		rf.resetTerm(args.Term)
+	}
 
-		if args.Term > rf.term {
-			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, reset rf.term", args.Term, rf.term, args.LeaderId)
-			rf.resetTerm(args.Term)
-		}
-		if args.PrevLogIndex > 0 {
-			if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
-				rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
-				if prev != nil {
-					for _, entry := range rf.log {
-						if entry.Term == prev.Term {
-							reply.ConflictingIndex = entry.Index
-							break
-						}
-					}
-					reply.ConflictingTerm = prev.Term
-				} else {
-					reply.ConflictingIndex = rf.LogTail().Index
-					reply.ConflictingTerm = 0
-				}
-				reply.Success = false
-
-				return
-			}
-		}
-		if len(args.Entries) > 0 {
-			// if pass log consistency check, do merge
-			rf.Debug(dLog, "before merge: %s", rf.FormatLog())
-			appendLeft := 0
-			for i, entry := range args.Entries {
-				if local := rf.GetLogAtIndex(entry.Index); local != nil {
-					if local.Index != entry.Index {
-						panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  entry: %+v  local log at entry.Index: %+v", rf.log[1].Index, entry, local))
-					}
-					if local.Term != entry.Term {
-						rf.Debug(dLog, "merge conflict at %d", i)
-						rf.log = rf.log[:rf.LogIndexToSubscript(entry.Index)]
-						appendLeft = i
+	if args.PrevLogIndex > 0 {
+		if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
+			rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
+			if prev != nil {
+				for _, entry := range rf.log {
+					if entry.Term == prev.Term {
+						reply.ConflictingIndex = entry.Index
 						break
 					}
-					appendLeft = i + 1
 				}
+				reply.ConflictingTerm = prev.Term
+			} else {
+				reply.ConflictingIndex = rf.LogTail().Index
+				reply.ConflictingTerm = 0
 			}
-			for i := appendLeft; i < len(args.Entries); i++ {
-				entry := *args.Entries[i]
-				rf.log = append(rf.log, &entry)
-			}
-			rf.log[0].Index = rf.LogTail().Index
-			rf.Debug(dLog, "after merge: %s", rf.FormatLog())
-			rf.persist()
-		}
-		// trigger apply
-		if args.LeaderCommit > rf.commitIndex {
-			rf.commitIndex = Min(args.LeaderCommit, rf.LogTail().Index)
-			rf.applyCond.Broadcast()
-		}
-		rf.Debug(dLog, "finish process heartbeat: commitIndex=%d", rf.commitIndex)
-		reply.Success = true
-	} else if rf.state == Leader {
-		if args.Term > rf.term {
-			rf.Debug(dLog, "received term %d > currentTerm %d from S%d, back to Follower", args.Term, rf.term, args.LeaderId)
-			rf.becomeFollower()
-			rf.resetTerm(args.Term)
-			reply.Success = true
+			reply.Success = false
+
+			return
 		}
 	}
+	if len(args.Entries) > 0 {
+		// if pass log consistency check, do merge
+		rf.Debug(dLog, "before merge: %s", rf.FormatLog())
+		appendLeft := 0
+		for i, entry := range args.Entries {
+			if local := rf.GetLogAtIndex(entry.Index); local != nil {
+				if local.Index != entry.Index {
+					panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  entry: %+v  local log at entry.Index: %+v", rf.log[1].Index, entry, local))
+				}
+				if local.Term != entry.Term {
+					rf.Debug(dLog, "merge conflict at %d", i)
+					rf.log = rf.log[:rf.LogIndexToSubscript(entry.Index)]
+					appendLeft = i
+					break
+				}
+				appendLeft = i + 1
+			}
+		}
+		for i := appendLeft; i < len(args.Entries); i++ {
+			entry := *args.Entries[i]
+			rf.log = append(rf.log, &entry)
+		}
+		rf.log[0].Index = rf.LogTail().Index
+		rf.Debug(dLog, "after merge: %s", rf.FormatLog())
+		rf.persist()
+	}
+	// trigger apply
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = Min(args.LeaderCommit, rf.LogTail().Index)
+		rf.applyCond.Broadcast()
+	}
+	rf.Debug(dLog, "finish process heartbeat: commitIndex=%d", rf.commitIndex)
+	reply.Success = true
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
