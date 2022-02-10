@@ -712,7 +712,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 	defer rf.mu.Unlock()
 	rf.Debug(dHeartbeat, "S%d AppendEntriesReply %+v rf.term=%d args.Term=%d", peer, reply, rf.term, args.Term)
 	if rf.term != args.Term {
-		rf.Debug(dHeartbeat, "S%d AppendEntriesReply rejected since rf.term(%d) != args.Term(%d)", rf.term, args.Term)
+		rf.Debug(dHeartbeat, "S%d AppendEntriesReply rejected since rf.term(%d) != args.Term(%d)", peer, rf.term, args.Term)
 		return
 	}
 	if reply.Term > rf.term {
@@ -749,7 +749,8 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				rf.applyCond.Broadcast()
 			}
 		} else {
-			if reply.ConflictingIndex == 0 && reply.ConflictingTerm == 0 {
+			if reply.Term < rf.term {
+				rf.Debug(dHeartbeat, "S%d false negative reply rejected")
 				return
 			}
 			nextIndex := rf.nextIndex[peer]
@@ -759,7 +760,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				for i := len(rf.log) - 1; i >= 1; i-- {
 					if rf.log[i].Term == reply.ConflictingTerm {
 						rf.nextIndex[peer] = Min(nextIndex, rf.log[i].Index+1)
-						rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d", peer, nextIndex, rf.nextIndex[peer])
+						rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d  full log: %s", peer, nextIndex, rf.nextIndex[peer], rf.FormatLog())
 						return
 					}
 				}
@@ -799,7 +800,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, &entry)
 	rf.persist()
 	rf.matchIndex[rf.me] += 1
-	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatStateOnly())
+	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatState())
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}
