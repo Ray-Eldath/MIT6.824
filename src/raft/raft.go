@@ -765,7 +765,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 					}
 				}
 			}
-			rf.nextIndex[peer] = Max(reply.ConflictingIndex, 1)
+			rf.nextIndex[peer] = Max(Min(nextIndex, reply.ConflictingIndex), 1)
 			rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d", peer, nextIndex, rf.nextIndex[peer])
 		}
 	}
