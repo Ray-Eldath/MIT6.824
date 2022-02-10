@@ -542,8 +542,8 @@ func (rf *Raft) DoElection() {
 
 // BroadcastHeartbeat must be called with rf.mu held.
 func (rf *Raft) BroadcastHeartbeat() {
-	rf.Debug(dHeartbeat, "heartbeat start")
-	term := rf.term
+	rf.Debug(dHeartbeat, "BroadcastHeartbeat start")
+	// term := rf.term
 	leaderId := rf.me
 	// leaderCommit := rf.commitIndex
 	// for i := range rf.peers {
@@ -561,17 +561,7 @@ func (rf *Raft) BroadcastHeartbeat() {
 			continue
 		}
 
-		go func(peer int) {
-			rf.Sync(peer, &AppendEntriesArgs{
-				Term:     term,
-				LeaderId: leaderId,
-				// LeaderCommit: leaderCommit,
-				Entries: nil,
-			})
-			// rf.Debug(dWarn, "sync done. try to unlock replicateCond[%d].L", peer)
-			// rf.replicateCond[peer].L.Unlock()
-			// rf.Debug(dWarn, "sync done. unlocked replicateCond[%d].L", peer)
-		}(i)
+		go rf.Replicate(i)
 	}
 
 	rf.mu.Lock()
@@ -758,7 +748,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				}
 			}
 			rf.nextIndex[peer] = Max(Min(nextIndex, reply.ConflictingIndex), 1)
-			rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d", peer, nextIndex, rf.nextIndex[peer])
+			rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d  full log: %s", peer, nextIndex, rf.nextIndex[peer], rf.FormatLog())
 		}
 	}
 }
@@ -856,6 +846,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.matchIndex = append(rf.matchIndex, 0)
 	}
 	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
 		go rf.DoReplicate(i)
 	}
 	if len(rf.log) != 1 {
