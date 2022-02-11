@@ -1087,7 +1087,8 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 
 	cfg.begin(name)
 
-	cfg.one(rand.Int(), servers, true)
+	cmd := 1
+	cfg.one(cmd, servers, true)
 	leader1 := cfg.checkOneLeader()
 
 	for i := 0; i < iters; i++ {
@@ -1099,19 +1100,25 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		}
 
 		if disconnect {
+			fmt.Printf("disconnect S%d\n", victim)
 			cfg.disconnect(victim)
-			cfg.one(rand.Int(), servers-1, true)
+			cmd += 1
+			cfg.one(cmd, servers-1, true)
 		}
 		if crash {
+			fmt.Printf("crash1 S%d\n", victim)
 			cfg.crash1(victim)
-			cfg.one(rand.Int(), servers-1, true)
+			cmd += 1
+			cfg.one(cmd, servers-1, true)
 		}
 		// send enough to get a snapshot
 		for i := 0; i < SnapShotInterval+1; i++ {
-			cfg.rafts[sender].Start(rand.Int())
+			cmd += 1
+			cfg.rafts[sender].Start(cmd)
 		}
 		// let applier threads catch up with the Start()'s
-		cfg.one(rand.Int(), servers-1, true)
+		cmd += 1
+		cfg.one(cmd, servers-1, true)
 
 		if cfg.LogSize() >= MAXLOGSIZE {
 			cfg.t.Fatalf("Log size too large")
@@ -1119,14 +1126,18 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		if disconnect {
 			// reconnect a follower, who maybe behind and
 			// needs to rceive a snapshot to catch up.
+			fmt.Printf("connect S%d\n", victim)
 			cfg.connect(victim)
-			cfg.one(rand.Int(), servers, true)
+			cmd += 1
+			cfg.one(cmd, servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
 		if crash {
+			fmt.Printf("start1 S%d\n", victim)
 			cfg.start1(victim, cfg.applierSnap)
 			cfg.connect(victim)
-			cfg.one(rand.Int(), servers, true)
+			cmd += 1
+			cfg.one(cmd, servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
 	}
