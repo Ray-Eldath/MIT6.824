@@ -119,11 +119,8 @@ func (rf *Raft) Majority() int {
 }
 
 func (rf *Raft) GetLogAtIndex(logIndex int) *LogEntry {
-	if len(rf.log) < 2 {
+	if logIndex < rf.log[0].Index {
 		return nil
-	}
-	if logIndex < 1 {
-		panic("logIndex < 1")
 	}
 	subscript := rf.LogIndexToSubscript(logIndex)
 	if len(rf.log) > subscript {
@@ -134,8 +131,7 @@ func (rf *Raft) GetLogAtIndex(logIndex int) *LogEntry {
 }
 
 func (rf *Raft) LogIndexToSubscript(logIndex int) int {
-	logicalLogSubscript := logIndex - rf.log[1].Index
-	return logicalLogSubscript + 1
+	return logIndex - rf.log[0].Index
 }
 
 func (rf *Raft) LogTail() *LogEntry {
@@ -311,7 +307,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		for i, entry := range args.Entries {
 			if local := rf.GetLogAtIndex(entry.Index); local != nil {
 				if local.Index != entry.Index {
-					panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. headIndex=%d  entry: %+v  local log at entry.Index: %+v", rf.log[1].Index, entry, local))
+					panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. entry: %+v  local log at entry.Index: %+v", entry, local))
 				}
 				if local.Term != entry.Term {
 					rf.Debug(dLog, "merge conflict at %d", i)
@@ -326,7 +322,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			entry := *args.Entries[i]
 			rf.log = append(rf.log, &entry)
 		}
-		rf.log[0].Index = rf.LogTail().Index
 		rf.Debug(dLog, "after merge: %s", rf.FormatLog())
 		rf.persist()
 	}
@@ -658,18 +653,13 @@ func (rf *Raft) Replicate(peer int) {
 		entry := *rf.log[j]
 		entries = append(entries, &entry)
 	}
-	prevLogIndex := 0
-	prevLogTerm := 0
-	if nextIndex-1 > 0 {
-		prevLogIndex = rf.log[nextIndex-1].Index
-		prevLogTerm = rf.log[nextIndex-1].Term
-		rf.Debug(dWarn, "replicate S%d nextIndex=%v matchIndex=%v prevLog: %v", peer, rf.nextIndex, rf.matchIndex, rf.GetLogAtIndex(prevLogIndex))
-	}
+	prev := rf.GetLogAtIndex(nextIndex - 1)
+	rf.Debug(dWarn, "replicate S%d nextIndex=%v matchIndex=%v prevLog: %v", peer, rf.nextIndex, rf.matchIndex, prev)
 	args := &AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
-		PrevLogIndex: prevLogIndex,
-		PrevLogTerm:  prevLogTerm,
+		PrevLogIndex: prev.Index,
+		PrevLogTerm:  prev.Term,
 		LeaderCommit: rf.commitIndex,
 		Entries:      entries,
 	}
@@ -770,10 +760,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if rf.state != Leader {
 		return -1, -1, false
 	}
-	rf.log[0].Index += 1
 	entry := LogEntry{
 		Term:    rf.term,
-		Index:   rf.log[0].Index,
+		Index:   rf.LogTail().Index + 1,
 		Command: command,
 	}
 	rf.log = append(rf.log, &entry)
@@ -783,7 +772,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	for i := range rf.peers {
 		rf.replicateCond[i].Broadcast()
 	}
-	return rf.log[0].Index, rf.term, rf.state == Leader
+	return entry.Index, rf.term, rf.state == Leader
 }
 
 //
