@@ -18,11 +18,9 @@ const (
 	dHeartbeat logTopic = "HRBT"
 	dClient    logTopic = "CLNT"
 	dCommit    logTopic = "CMIT"
-	dDrop      logTopic = "DROP"
 	dLeader    logTopic = "LEAD"
 	dPersist   logTopic = "PERS"
-	dSnap      logTopic = "SNAP"
-	dTerm      logTopic = "TERM"
+	dSnapshot  logTopic = "SNAP"
 
 	dTrace logTopic = "TRACE"
 	dInfo  logTopic = "INFO"
@@ -63,7 +61,7 @@ func (rf *Raft) FormatLog() string {
 }
 
 func (rf *Raft) FormatState() string {
-	return fmt.Sprintf("%s  current log: %v", rf.FormatStateOnly(), rf.FormatLog())
+	return fmt.Sprintf("%s  full log: %v", rf.FormatStateOnly(), rf.log)
 }
 
 func (rf *Raft) FormatStateOnly() string {
