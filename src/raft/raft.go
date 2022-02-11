@@ -460,9 +460,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 const (
-	ElectionTimeoutMax = int64(500 * time.Millisecond)
-	ElectionTimeoutMin = int64(300 * time.Millisecond)
-	HeartbeatInterval  = 200 * time.Millisecond
+	ElectionTimeoutMax = int64(600 * time.Millisecond)
+	ElectionTimeoutMin = int64(400 * time.Millisecond)
+	HeartbeatInterval  = 100 * time.Millisecond
 )
 
 func NextElectionTimeout() time.Duration {
