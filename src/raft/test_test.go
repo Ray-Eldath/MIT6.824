@@ -66,14 +66,16 @@ func TestReElection2A(t *testing.T) {
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
-	fmt.Printf("rejoin")
+	fmt.Printf("rejoin S%d\n", leader1)
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no leader should
 	// be elected.
 	println("no quorum")
+	fmt.Printf("disconnect S%d\n", leader2)
 	cfg.disconnect(leader2)
+	fmt.Printf("disconnect S%d\n", (leader2+1)%servers)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
@@ -717,19 +719,27 @@ func TestPersist32C(t *testing.T) {
 	cfg.one(101, 3, true)
 
 	leader := cfg.checkOneLeader()
+	fmt.Printf("disconnect S%d\n", (leader+2)%servers)
 	cfg.disconnect((leader + 2) % servers)
 
 	cfg.one(102, 2, true)
 
+	fmt.Printf("crash1 S%d\n", (leader+0)%servers)
 	cfg.crash1((leader + 0) % servers)
+	fmt.Printf("crash1 S%d\n", (leader+1)%servers)
 	cfg.crash1((leader + 1) % servers)
+	fmt.Printf("connect S%d\n", (leader+2)%servers)
 	cfg.connect((leader + 2) % servers)
+	fmt.Printf("start1 S%d\n", (leader+0)%servers)
 	cfg.start1((leader+0)%servers, cfg.applier)
+	fmt.Printf("connect S%d\n", (leader+0)%servers)
 	cfg.connect((leader + 0) % servers)
 
 	cfg.one(103, 2, true)
 
+	fmt.Printf("start1 S%d\n", (leader+1)%servers)
 	cfg.start1((leader+1)%servers, cfg.applier)
+	fmt.Printf("connect S%d\n", (leader+1)%servers)
 	cfg.connect((leader + 1) % servers)
 
 	cfg.one(104, servers, true)
@@ -754,29 +764,38 @@ func TestFigure82C(t *testing.T) {
 
 	cfg.begin("Test (2C): Figure 8")
 
-	cfg.one(rand.Int(), 1, true)
+	cmd := 1
+	cfg.one(cmd, 1, true)
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
 		leader := -1
 		for i := 0; i < servers; i++ {
 			if cfg.rafts[i] != nil {
-				_, _, ok := cfg.rafts[i].Start(rand.Int())
+				cmd += 1 // 2
+				_, _, ok := cfg.rafts[i].Start(cmd)
 				if ok {
 					leader = i
 				}
 			}
 		}
 
+		quickly := false
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		} else {
+			quickly = true
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if leader != -1 {
+			if quickly {
+				fmt.Printf("crash1 S%d quickly (perhaps without committing the command)\n", leader)
+			} else {
+				fmt.Printf("crash1 S%d after a while (most likely committing the command)\n", leader)
+			}
 			cfg.crash1(leader)
 			nup -= 1
 		}
@@ -784,7 +803,10 @@ func TestFigure82C(t *testing.T) {
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.rafts[s] == nil {
+				fmt.Printf("nup=%d < 3, cannot form majority. start a server\n", nup)
+				fmt.Printf("start1 S%d\n", s)
 				cfg.start1(s, cfg.applier)
+				fmt.Printf("connect S%d\n", s)
 				cfg.connect(s)
 				nup += 1
 			}
@@ -798,7 +820,9 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int(), servers, true)
+	cmd += 1
+	fmt.Printf("one %d\n", cmd)
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }
@@ -839,7 +863,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
-	cfg.one(rand.Int()%10000, 1, true)
+	cmd := 1
+	cfg.one(cmd, 1, true)
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
@@ -848,21 +873,29 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 		leader := -1
 		for i := 0; i < servers; i++ {
-			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
+			cmd += 1 // 2
+			_, _, ok := cfg.rafts[i].Start(cmd)
 			if ok && cfg.connected[i] {
 				leader = i
 			}
 		}
 
+		quickly := false
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		} else {
+			quickly = true
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
+			if quickly {
+				fmt.Printf("disconnect S%d quickly (perhaps without committing the command)\n", leader)
+			} else {
+				fmt.Printf("disconnect S%d after a while (most likely committing the command)\n", leader)
+			}
 			cfg.disconnect(leader)
 			nup -= 1
 		}
@@ -870,6 +903,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
+				fmt.Printf("nup=%d < 3, cannot form majority. reconnect a server\n", nup)
+				fmt.Printf("connect S%d\n", s)
 				cfg.connect(s)
 				nup += 1
 			}
@@ -882,7 +917,9 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int()%10000, servers, true)
+	cmd += 1
+	fmt.Printf("one %d\n", cmd)
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }
