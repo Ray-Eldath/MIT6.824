@@ -15,7 +15,7 @@ const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
-		log.Printf(format, a...)
+		
 	}
 	return
 }
@@ -52,7 +52,7 @@ func (kv *KVServer) DoApply() {
 				continue
 			}
 			kv.mu.Lock()
-			log.Printf("S%d apply {%d %+v}", kv.me, v.CommandIndex, v.Command)
+			
 			switch args := v.Command.(Op).Args.(type) {
 			case GetArgs:
 				if s, ok := kv.kv[args.Key]; ok {
@@ -102,7 +102,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	op := Op{*args}
 	for {
 		i, _, isLeader := kv.rf.Start(op)
-		log.Printf("S%d raft start Get i=%d %+v", kv.me, i, op)
+		
 		if !isLeader {
 			reply.Err = ErrWrongLeader
 			return
@@ -112,14 +112,14 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		kv.mu.Unlock()
 		select {
 		case v := <-kv.getDone[i]:
-			log.Printf("S%d raft Get done: %+v => %+v", kv.me, op, v)
+			
 			reply.Value = v
 			reply.Err = OK
 			return
 		case <-time.After(RestartInterval):
-			log.Printf("S%d raft Get timeout i=%d", kv.me, i)
+			
 			go func(i int, ch chan string) {
-				log.Printf("dismiss getDone[%d]", i)
+				
 				<-ch
 				close(ch)
 			}(i, kv.getDone[i])
@@ -135,7 +135,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	op := Op{*args}
 	for {
 		i, _, isLeader := kv.rf.Start(op)
-		log.Printf("S%d raft start Put i=%d %+v", kv.me, i, op)
+		
 		if !isLeader {
 			reply.Err = ErrWrongLeader
 			return
@@ -148,13 +148,13 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			if !ok {
 				continue
 			}
-			log.Printf("S%d raft Put done: %+v", kv.me, op)
+			
 			reply.Err = OK
 			return
 		case <-time.After(RestartInterval):
-			log.Printf("S%d raft Put timeout i=%d", kv.me, i)
+			
 			go func(i int, ch chan struct{}) {
-				log.Printf("dismiss putDone[%d]", i)
+				
 				<-ch
 			}(i, kv.putDone[i])
 		}
