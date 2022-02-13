@@ -775,16 +775,7 @@ func (rf *Raft) Replicate(peer int) {
 		return
 	}
 
-	var entries []*LogEntry
 	nextIndex := rf.nextIndex[peer]
-	for j := nextIndex; j <= rf.LogTail().Index; j++ {
-		atIndex := rf.GetLogAtIndex(j)
-		if atIndex == nil {
-			panic(rf.Sdebug(dFatal, "atIndex == nil  %s", rf.FormatState()))
-		}
-		entry := *atIndex
-		entries = append(entries, &entry)
-	}
 	prev := rf.GetLogAtIndex(nextIndex - 1)
 	rf.Debug(dWarn, "replicate S%d nextIndex=%v matchIndex=%v prevLog: %v", peer, rf.nextIndex, rf.matchIndex, prev)
 	args := &AppendEntriesArgs{
@@ -793,7 +784,7 @@ func (rf *Raft) Replicate(peer int) {
 		PrevLogIndex: prev.Index,
 		PrevLogTerm:  prev.Term,
 		LeaderCommit: rf.commitIndex,
-		Entries:      entries,
+		Entries:      rf.log[nextIndex : rf.LogTail().Index+1],
 	}
 	// rf.Debug(dReplicate, "replication triggered for S%d with args %+v", peer, args)
 	rf.mu.Unlock()
@@ -902,9 +893,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.matchIndex[rf.me] += 1
 	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatState())
 	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
 		rf.replicateCond[i].Signal()
 	}
 	return entry.Index, rf.term, rf.state == Leader
