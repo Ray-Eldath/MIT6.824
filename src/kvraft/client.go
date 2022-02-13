@@ -34,7 +34,7 @@ func (ck *Clerk) args() Args {
 	return Args{ClientId: ck.cid, RequestId: nrand()}
 }
 
-const RetryInterval = 1000 * time.Millisecond
+const RetryInterval = 300 * time.Millisecond
 
 //
 // fetch the current value for a key.
