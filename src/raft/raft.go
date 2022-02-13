@@ -147,7 +147,7 @@ func LogTail(xs []*LogEntry) *LogEntry {
 func (rf *Raft) resetTerm(term int) {
 	rf.term = term
 	rf.votedFor = -1
-	rf.persist()
+	//rf.persist()
 }
 
 func (rf *Raft) becomeFollower() {
