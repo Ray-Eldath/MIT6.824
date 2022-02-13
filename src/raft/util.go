@@ -75,7 +75,7 @@ func (rf *Raft) FormatFullLog() string {
 }
 
 func (rf *Raft) FormatState() string {
-	return fmt.Sprintf("%s  full log: %v", rf.FormatStateOnly(), rf.FormatFullLog())
+	return fmt.Sprintf("%s  full log: %v", rf.FormatStateOnly(), rf.log)
 }
 
 func (rf *Raft) FormatStateOnly() string {
@@ -83,9 +83,10 @@ func (rf *Raft) FormatStateOnly() string {
 }
 
 const Padding = "    "
+const quiet = true
 
 func (rf *Raft) Debug(topic logTopic, format string, a ...interface{}) {
-	if debugVerbosity > 0 {
+	if debugVerbosity > 0 && !quiet {
 		log.Print(rf.Sdebug(topic, format, a...))
 	}
 }
