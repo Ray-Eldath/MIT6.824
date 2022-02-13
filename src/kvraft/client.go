@@ -3,11 +3,17 @@ package kvraft
 import "6.824/labrpc"
 import "crypto/rand"
 import "math/big"
-
+import "time"
+import "sync/atomic"
+import (
+	"log"
+	rand2 "math/rand"
+)
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
-	// You will have to modify this struct.
+	cid     int32
+	leader  int32
 }
 
 func nrand() int64 {
@@ -20,9 +26,15 @@ func nrand() int64 {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
-	// You'll have to add code here.
+	ck.cid = rand2.Int31()
 	return ck
 }
+
+func (ck *Clerk) args() Args {
+	return Args{ClientId: ck.cid, RequestId: nrand()}
+}
+
+const RetryInterval = 1000 * time.Millisecond
 
 //
 // fetch the current value for a key.
@@ -37,9 +49,28 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
-	return ""
+	args := GetArgs{Key: key, Args: ck.args()}
+	leader := atomic.LoadInt32(&ck.leader)
+	for {
+		var reply GetReply
+		log.Printf("Client call Get leader=%d", leader)
+		ok := ck.servers[leader].Call("KVServer.Get", &args, &reply)
+		if ok {
+			switch reply.Err {
+			case ErrWrongLeader:
+				oldLeader := leader
+				leader = (leader + 1) % int32(len(ck.servers))
+				log.Printf("ErrWrongLeader old_leader=%d new_leader=%d", oldLeader, leader)
+				atomic.StoreInt32(&ck.leader, leader)
+				break
+			case ErrNoKey:
+				return ""
+			case OK:
+				return reply.Value
+			}
+		}
+		time.Sleep(RetryInterval)
+	}
 }
 
 //
@@ -53,7 +84,32 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
+	args := PutAppendArgs{Key: key, Value: value, Args: ck.args()}
+	if op == "Put" {
+		args.Type = PutOp
+	} else {
+		args.Type = AppendOp
+	}
+
+	leader := atomic.LoadInt32(&ck.leader)
+	for {
+		var reply PutAppendReply
+		log.Printf("Client call PutAppend leader=%d", leader)
+		ok := ck.servers[leader].Call("KVServer.PutAppend", &args, &reply)
+		if ok {
+			switch reply.Err {
+			case ErrWrongLeader:
+				oldLeader := leader
+				leader = (leader + 1) % int32(len(ck.servers))
+				log.Printf("ErrWrongLeader old_leader=%d new_leader=%d", oldLeader, leader)
+				atomic.StoreInt32(&ck.leader, leader)
+				break
+			case OK:
+				return
+			}
+		}
+		time.Sleep(RetryInterval)
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {

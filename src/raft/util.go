@@ -53,11 +53,25 @@ func init() {
 }
 
 func (rf *Raft) FormatLog() string {
-	s := ""
-	for i := 1; i < len(rf.log); i++ {
-		s += fmt.Sprintf("%v ", rf.log[i])
+	if debugVerbosity > 1 {
+		s := ""
+		for i := 1; i < len(rf.log); i++ {
+			s += fmt.Sprintf("%v ", rf.log[i])
+		}
+		return s
+	} else {
+
+		return "require getVerbosity() > 1"
 	}
-	return s
+}
+
+func (rf *Raft) FormatFullLog() string {
+	if debugVerbosity > 1 {
+		return fmt.Sprintf("%s %s", rf.log[0], rf.FormatLog())
+	} else {
+
+		return "require getVerbosity() > 1"
+	}
 }
 
 func (rf *Raft) FormatState() string {
@@ -69,9 +83,10 @@ func (rf *Raft) FormatStateOnly() string {
 }
 
 const Padding = "    "
+const quiet = true
 
 func (rf *Raft) Debug(topic logTopic, format string, a ...interface{}) {
-	if debugVerbosity > 0 {
+	if debugVerbosity > 0 && !quiet {
 		log.Print(rf.Sdebug(topic, format, a...))
 	}
 }

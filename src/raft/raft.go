@@ -256,7 +256,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		return false
 	}
 
-	rf.Debug(dSnapshot, "before install snapshot: %s  full log: %v", rf.FormatStateOnly(), rf.log)
+	rf.Debug(dSnapshot, "before install snapshot: %s  full log: %v", rf.FormatStateOnly(), rf.FormatFullLog())
 	if lastIncludedIndex >= rf.LogTail().Index {
 		rf.log = rf.log[0:1]
 	} else {
@@ -267,7 +267,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	rf.log[0].Command = nil
 	rf.commitIndex = lastIncludedIndex
 	rf.lastApplied = lastIncludedIndex
-	rf.Debug(dSnapshot, "after install snapshot: %s  full log: %v", rf.FormatStateOnly(), rf.log)
+	rf.Debug(dSnapshot, "after install snapshot: %s  full log: %v", rf.FormatStateOnly(), rf.FormatFullLog())
 	rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
 	return true
 }
@@ -282,10 +282,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.Debug(dSnapshot, "snapshot until %d", index)
 	for _, entry := range rf.log {
 		if entry.Index == index {
-			rf.Debug(dSnapshot, "before snapshot:  full log: %v", rf.log)
+			rf.Debug(dSnapshot, "before snapshot:  full log: %v", rf.FormatFullLog())
 			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
 			rf.log[0].Command = nil
-			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.log)
+			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.FormatFullLog())
 			rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
 		}
 	}
@@ -319,7 +319,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.PrevLogIndex > 0 {
 		if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
-			rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %v", args.PrevLogIndex, args.PrevLogTerm, prev, rf.log)
+			rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %s", args.PrevLogIndex, args.PrevLogTerm, prev, rf.FormatFullLog())
 			if prev != nil {
 				for _, entry := range rf.log {
 					if entry.Term == prev.Term {
@@ -452,7 +452,7 @@ func (rf *Raft) isAtLeastUpToDate(args *RequestVoteArgs) bool {
 		b = args.LastLogTerm >= rf.LogTail().Term
 	}
 	if !b {
-		rf.Debug(dVote, "hands down RequestVote from S%d  %+v  full log: %v", args.CandidateId, args, rf.log)
+		rf.Debug(dVote, "hands down RequestVote from S%d  %+v  full log: %v", args.CandidateId, args, rf.FormatFullLog())
 	}
 	return b
 }
@@ -546,7 +546,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 
 const (
 	ElectionTimeoutMax = int64(600 * time.Millisecond)
-	ElectionTimeoutMin = int64(400 * time.Millisecond)
+	ElectionTimeoutMin = int64(500 * time.Millisecond)
 	HeartbeatInterval  = 100 * time.Millisecond
 )
 
@@ -828,7 +828,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 			logTailIndex := LogTail(args.Entries).Index
 			rf.matchIndex[peer] = logTailIndex
 			rf.nextIndex[peer] = logTailIndex + 1
-			rf.Debug(dHeartbeat, "S%d logTailIndex=%d commitIndex=%d matchIndex=%v nextIndex=%v", peer, logTailIndex, rf.commitIndex, rf.matchIndex, rf.nextIndex)
+			rf.Debug(dHeartbeat, "S%d logTailIndex=%d commitIndex=%d lastApplied=%d matchIndex=%v nextIndex=%v", peer, logTailIndex, rf.commitIndex, rf.lastApplied, rf.matchIndex, rf.nextIndex)
 
 			// update commitIndex
 			preCommitIndex := rf.commitIndex
@@ -861,13 +861,13 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 				for i := len(rf.log) - 1; i >= 1; i-- {
 					if rf.log[i].Term == reply.ConflictingTerm {
 						rf.nextIndex[peer] = Min(nextIndex, rf.log[i].Index+1)
-						rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d  full log: %s", peer, nextIndex, rf.nextIndex[peer], rf.FormatLog())
+						rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d  full log: %s", peer, nextIndex, rf.nextIndex[peer], rf.FormatFullLog())
 						return
 					}
 				}
 			}
 			rf.nextIndex[peer] = Max(Min(nextIndex, reply.ConflictingIndex), 1)
-			rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d  full log: %s", peer, nextIndex, rf.nextIndex[peer], rf.FormatLog())
+			rf.Debug(dHeartbeat, "S%d old_nextIndex: %d new_nextIndex: %d  full log: %s", peer, nextIndex, rf.nextIndex[peer], rf.FormatFullLog())
 		}
 	}
 }
@@ -902,7 +902,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.matchIndex[rf.me] += 1
 	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatState())
 	for i := range rf.peers {
-		rf.replicateCond[i].Broadcast()
+		rf.replicateCond[i].Signal()
 	}
 	return entry.Index, rf.term, rf.state == Leader
 }

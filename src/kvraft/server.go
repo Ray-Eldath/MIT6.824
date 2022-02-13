@@ -4,9 +4,11 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"io/ioutil"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const Debug = false
@@ -18,11 +20,8 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	Args interface{}
 }
 
 type KVServer struct {
@@ -34,16 +33,133 @@ type KVServer struct {
 
 	maxraftstate int // snapshot if log grows this big
 
-	// Your definitions here.
+	kv      map[string]string
+	cid     []int32
+	dedup   map[int64]Op
+	getDone map[int]chan string
+	putDone map[int]chan struct{}
 }
 
+func (kv *KVServer) DoApply() {
+	for v := range kv.applyCh {
+		if kv.killed() {
+			return
+		}
+
+		if v.CommandValid {
+			kv.apply(v)
+			if _, isLeader := kv.rf.GetState(); !isLeader {
+				continue
+			}
+			kv.mu.Lock()
+			log.Printf("S%d apply {%d %+v}", kv.me, v.CommandIndex, v.Command)
+			switch args := v.Command.(Op).Args.(type) {
+			case GetArgs:
+				if s, ok := kv.kv[args.Key]; ok {
+					kv.getDone[v.CommandIndex] <- s
+				} else {
+					kv.getDone[v.CommandIndex] <- ""
+				}
+				break
+			case PutAppendArgs:
+				kv.putDone[v.CommandIndex] <- struct{}{}
+			}
+			kv.mu.Unlock()
+		} else {
+			//TODO: call CondSnapshot
+		}
+	}
+}
+
+func (kv *KVServer) apply(v raft.ApplyMsg) {
+	switch args := v.Command.(Op).Args.(type) {
+	case GetArgs:
+		break
+	case PutAppendArgs:
+		if args.Type == PutOp {
+			kv.kv[args.Key] = args.Value
+		} else {
+			kv.kv[args.Key] += args.Value
+		}
+	}
+}
+
+func boolToInt32(b bool) int32 {
+	if b {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+const RestartInterval = 1000 * time.Millisecond
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	op := Op{*args}
+	for {
+		kv.mu.Lock()
+		i, _, isLeader := kv.rf.Start(op)
+		log.Printf("S%d raft start Get i=%d %+v", kv.me, i, op)
+		if !isLeader {
+			reply.Err = ErrWrongLeader
+			kv.mu.Unlock()
+			return
+		}
+		kv.getDone[i] = make(chan string)
+		kv.mu.Unlock()
+		select {
+		case v := <-kv.getDone[i]:
+			log.Printf("S%d raft Get done: %+v => %+v", kv.me, op, v)
+			reply.Value = v
+			reply.Err = OK
+			return
+		case <-time.After(RestartInterval):
+			log.Printf("S%d raft Get timeout i=%d", kv.me, i)
+			go func(i int, ch chan string) {
+				log.Printf("dismiss getDone[%d]", i)
+				<-ch
+				close(ch)
+			}(i, kv.getDone[i])
+		}
+	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	op := Op{*args}
+	for {
+		i, _, isLeader := kv.rf.Start(op)
+		log.Printf("S%d raft start Put i=%d %+v", kv.me, i, op)
+		if !isLeader {
+			reply.Err = ErrWrongLeader
+			return
+		}
+		kv.mu.Lock()
+		kv.putDone[i] = make(chan struct{})
+		kv.mu.Unlock()
+		select {
+		case _, ok := <-kv.putDone[i]:
+			if !ok {
+				continue
+			}
+			log.Printf("S%d raft Put done: %+v", kv.me, op)
+			reply.Err = OK
+			return
+		case <-time.After(RestartInterval):
+			log.Printf("S%d raft Put timeout i=%d", kv.me, i)
+			go func(i int, ch chan struct{}) {
+				log.Printf("dismiss putDone[%d]", i)
+				<-ch
+			}(i, kv.putDone[i])
+		}
+	}
 }
 
 //
@@ -85,17 +201,27 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
+	labgob.Register(GetArgs{})
+	labgob.Register(PutAppendArgs{})
 
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
 
-	// You may need initialization code here.
-
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
-	// You may need initialization code here.
+	kv.getDone = make(map[int]chan string)
+	kv.putDone = make(map[int]chan struct{})
+	kv.kv = make(map[string]string)
+	go kv.DoApply()
 
 	return kv
+}
+
+const quiet = false
+
+func init() {
+	if quiet {
+		log.SetOutput(ioutil.Discard)
+	}
 }
