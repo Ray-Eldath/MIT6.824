@@ -92,7 +92,7 @@ func boolToInt32(b bool) int32 {
 	}
 }
 
-const RestartInterval = 1000 * time.Millisecond
+const RestartInterval = 500 * time.Millisecond
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	if _, isLeader := kv.rf.GetState(); !isLeader {
@@ -101,14 +101,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 	op := Op{*args}
 	for {
-		kv.mu.Lock()
 		i, _, isLeader := kv.rf.Start(op)
 		log.Printf("S%d raft start Get i=%d %+v", kv.me, i, op)
 		if !isLeader {
 			reply.Err = ErrWrongLeader
-			kv.mu.Unlock()
 			return
 		}
+		kv.mu.Lock()
 		kv.getDone[i] = make(chan string)
 		kv.mu.Unlock()
 		select {
