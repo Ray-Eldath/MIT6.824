@@ -194,6 +194,10 @@ func (rf *Raft) serializeState() []byte {
 	return w.Bytes()
 }
 
+func (rf *Raft) GetStateSize() int {
+	return rf.persister.RaftStateSize()
+}
+
 //
 // restore previously persisted state.
 //
@@ -907,6 +911,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	//	}
 	//	rf.replicateCond[i].Signal()
 	//}
+	// use replicateCond[i] (replicate by Sync) could significantly reduce RPC call times since
+	// multiple Start will be batched into a single round of replication. but doing so will introduce
+	// longer latency because replication is not triggered immediately, and higher CPU time due to
+	// serialization is more costly when dealing with longer AppendEntries RPC calls.
+	// personally I think the commented Sync design is better, but that wont make us pass speed tests in Lab 3.
+	// TODO: how could the actual system find the sweet point between network overhead and replication latency?
 	rf.BroadcastHeartbeat()
 	return entry.Index, rf.term, rf.state == Leader
 }

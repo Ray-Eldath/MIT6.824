@@ -4,8 +4,13 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"bytes"
+	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,12 +28,28 @@ type KVServer struct {
 	dead    int32 // set by Kill()
 
 	maxraftstate int // snapshot if log grows this big
+	serversLen   int
 
 	kv      map[string]string
 	cid     []int32
 	dedup   map[int32]Op
 	getDone map[int]chan string
 	putDone map[int]chan struct{}
+}
+
+func (kv *KVServer) readSnapshot(snapshot []byte) {
+	var dedup map[int32]Op
+	var kvmap map[string]string
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	if e := d.Decode(&dedup); e != nil {
+		dedup = make(map[int32]Op)
+	}
+	if e := d.Decode(&kvmap); e != nil {
+		kvmap = make(map[string]string)
+	}
+	kv.dedup = dedup
+	kv.kv = kvmap
 }
 
 func (kv *KVServer) DoApply() {
@@ -43,7 +64,6 @@ func (kv *KVServer) DoApply() {
 				continue
 			}
 			kv.mu.Lock()
-			log.Printf("S%d apply {%d %+v}", kv.me, v.CommandIndex, v.Command)
 			switch args := v.Command.(Op).Args.(type) {
 			case GetArgs:
 				getCh := kv.getDone[v.CommandIndex]
@@ -64,21 +84,26 @@ func (kv *KVServer) DoApply() {
 				}()
 			}
 		} else {
-			//TODO: call CondSnapshot
+			kv.readSnapshot(v.Snapshot)
+			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.Snapshot)
+			kv.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
 		}
 	}
 }
 
 func (kv *KVServer) apply(v raft.ApplyMsg) {
 	op := v.Command.(Op)
+	var key string
 	switch args := op.Args.(type) {
 	case GetArgs:
+		key = args.Key
 		break
 	case PutAppendArgs:
+		key = args.Key
 		if dup, ok := kv.dedup[args.ClientId]; ok {
 			if putDup, ok := dup.Args.(PutAppendArgs); ok && putDup.RequestId == args.RequestId {
-				log.Printf("duplicate found for putDup=%+v  args=%+v", putDup, args)
-				return
+				kv.Debug("duplicate found for putDup=%+v  args=%+v", putDup, args)
+				break
 			}
 		}
 		if args.Type == PutOp {
@@ -87,6 +112,19 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 			kv.kv[args.Key] += args.Value
 		}
 		kv.dedup[args.ClientId] = op
+	}
+	kv.Debug("applied {%d %+v} value: %s", v.CommandIndex, v.Command, kv.kv[key])
+	if kv.rf.GetStateSize() >= kv.maxraftstate && kv.maxraftstate != -1 {
+		kv.Debug("checkSnapshot: kv.rf.GetStateSize(%d) >= kv.maxraftstate(%d)", kv.rf.GetStateSize(), kv.maxraftstate)
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		if err := e.Encode(kv.dedup); err != nil {
+			panic(err)
+		}
+		if err := e.Encode(kv.kv); err != nil {
+			panic(err)
+		}
+		kv.rf.Snapshot(v.CommandIndex, w.Bytes())
 	}
 }
 
@@ -99,7 +137,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 	op := Op{*args}
 	i, _, isLeader := kv.rf.Start(op)
-	log.Printf("S%d raft start Get i=%d %+v", kv.me, i, op)
+	kv.Debug("raft start Get i=%d %+v", i, op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -110,7 +148,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Unlock()
 	select {
 	case v := <-ch:
-		log.Printf("S%d raft Get done: %+v => %+v", kv.me, op, v)
+		kv.Debug("raft Get done: %+v => %+v", op, v)
 		reply.Value = v
 		reply.Err = OK
 		return
@@ -127,7 +165,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	op := Op{*args}
 	i, _, isLeader := kv.rf.Start(op)
-	log.Printf("S%d raft start Put i=%d %+v", kv.me, i, op)
+	kv.Debug("raft start Put i=%d %+v", i, op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -138,7 +176,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Unlock()
 	select {
 	case <-ch:
-		log.Printf("S%d raft Put done: %+v", kv.me, op)
+		kv.Debug("raft Put done: %+v", op)
 		reply.Err = OK
 		return
 	case <-time.After(TimeoutInterval):
@@ -192,20 +230,36 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
+	kv.serversLen = len(servers)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.getDone = make(map[int]chan string)
 	kv.putDone = make(map[int]chan struct{})
-	kv.dedup = make(map[int32]Op)
-	kv.kv = make(map[string]string)
+	kv.readSnapshot(persister.ReadSnapshot())
+	kv.Debug("StartKVServer dedup=%v  kv=%v", kv.dedup, kv.kv)
 	go kv.DoApply()
 
 	return kv
 }
 
 func init() {
-	if raft.DebugVerbosity < 1 {
+	v := os.Getenv("KV_VERBOSE")
+	level := 0
+	if v != "" {
+		level, _ = strconv.Atoi(v)
+	}
+	if level < 1 {
 		log.SetOutput(ioutil.Discard)
 	}
+}
+
+const Padding = "    "
+
+func (kv *KVServer) Debug(format string, a ...interface{}) {
+	preamble := strings.Repeat(Padding, kv.me)
+	epilogue := strings.Repeat(Padding, kv.serversLen-kv.me-1)
+	prefix := fmt.Sprintf("[SERVER] %s%s S%d %s", preamble, raft.Microseconds(time.Now()), kv.me, epilogue)
+	format = prefix + format
+	log.Print(fmt.Sprintf(format, a...))
 }

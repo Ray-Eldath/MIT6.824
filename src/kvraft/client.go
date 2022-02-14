@@ -53,7 +53,7 @@ func (ck *Clerk) Get(key string) string {
 	leader := atomic.LoadInt32(&ck.leader)
 	for {
 		var reply GetReply
-		log.Printf("Client call Get leader=%d", leader)
+		log.Printf("CID%d Client call Get leader=%d", ck.cid, leader)
 		ok := ck.servers[leader].Call("KVServer.Get", &args, &reply)
 		if ok {
 			if reply.Err == OK {
@@ -88,7 +88,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	leader := atomic.LoadInt32(&ck.leader)
 	for {
 		var reply PutAppendReply
-		log.Printf("Client call PutAppend leader=%d", leader)
+		log.Printf("CID%d Client call PutAppend leader=%d", ck.cid, leader)
 		ok := ck.servers[leader].Call("KVServer.PutAppend", &args, &reply)
 		if ok {
 			if reply.Err == OK {
