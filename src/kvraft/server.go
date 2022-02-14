@@ -11,15 +11,6 @@ import (
 	"time"
 )
 
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 type Op struct {
 	Args interface{}
 }
@@ -35,7 +26,7 @@ type KVServer struct {
 
 	kv      map[string]string
 	cid     []int32
-	dedup   map[int64]Op
+	dedup   map[int32]Op
 	getDone map[int]chan string
 	putDone map[int]chan struct{}
 }
@@ -55,16 +46,23 @@ func (kv *KVServer) DoApply() {
 			log.Printf("S%d apply {%d %+v}", kv.me, v.CommandIndex, v.Command)
 			switch args := v.Command.(Op).Args.(type) {
 			case GetArgs:
+				getCh := kv.getDone[v.CommandIndex]
+				val := ""
 				if s, ok := kv.kv[args.Key]; ok {
-					kv.getDone[v.CommandIndex] <- s
-				} else {
-					kv.getDone[v.CommandIndex] <- ""
+					val = s
 				}
+				kv.mu.Unlock()
+				go func() {
+					getCh <- val
+				}()
 				break
 			case PutAppendArgs:
-				kv.putDone[v.CommandIndex] <- struct{}{}
+				putCh := kv.putDone[v.CommandIndex]
+				kv.mu.Unlock()
+				go func() {
+					putCh <- struct{}{}
+				}()
 			}
-			kv.mu.Unlock()
 		} else {
 			//TODO: call CondSnapshot
 		}
@@ -72,27 +70,27 @@ func (kv *KVServer) DoApply() {
 }
 
 func (kv *KVServer) apply(v raft.ApplyMsg) {
-	switch args := v.Command.(Op).Args.(type) {
+	op := v.Command.(Op)
+	switch args := op.Args.(type) {
 	case GetArgs:
 		break
 	case PutAppendArgs:
+		if dup, ok := kv.dedup[args.ClientId]; ok {
+			if putDup, ok := dup.Args.(PutAppendArgs); ok && putDup.RequestId == args.RequestId {
+				log.Printf("duplicate found for putDup=%+v  args=%+v", putDup, args)
+				return
+			}
+		}
 		if args.Type == PutOp {
 			kv.kv[args.Key] = args.Value
 		} else {
 			kv.kv[args.Key] += args.Value
 		}
+		kv.dedup[args.ClientId] = op
 	}
 }
 
-func boolToInt32(b bool) int32 {
-	if b {
-		return 1
-	} else {
-		return 0
-	}
-}
-
-const RestartInterval = 500 * time.Millisecond
+const TimeoutInterval = 500 * time.Millisecond
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	if _, isLeader := kv.rf.GetState(); !isLeader {
@@ -100,30 +98,25 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	op := Op{*args}
-	for {
-		i, _, isLeader := kv.rf.Start(op)
-		log.Printf("S%d raft start Get i=%d %+v", kv.me, i, op)
-		if !isLeader {
-			reply.Err = ErrWrongLeader
-			return
-		}
-		kv.mu.Lock()
-		kv.getDone[i] = make(chan string)
-		kv.mu.Unlock()
-		select {
-		case v := <-kv.getDone[i]:
-			log.Printf("S%d raft Get done: %+v => %+v", kv.me, op, v)
-			reply.Value = v
-			reply.Err = OK
-			return
-		case <-time.After(RestartInterval):
-			log.Printf("S%d raft Get timeout i=%d", kv.me, i)
-			go func(i int, ch chan string) {
-				log.Printf("dismiss getDone[%d]", i)
-				<-ch
-				close(ch)
-			}(i, kv.getDone[i])
-		}
+	i, _, isLeader := kv.rf.Start(op)
+	log.Printf("S%d raft start Get i=%d %+v", kv.me, i, op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	ch := make(chan string, 1)
+	kv.mu.Lock()
+	kv.getDone[i] = ch
+	kv.mu.Unlock()
+	select {
+	case v := <-ch:
+		log.Printf("S%d raft Get done: %+v => %+v", kv.me, op, v)
+		reply.Value = v
+		reply.Err = OK
+		return
+	case <-time.After(TimeoutInterval):
+		reply.Err = ErrTimeout
+		return
 	}
 }
 
@@ -133,31 +126,24 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	op := Op{*args}
-	for {
-		i, _, isLeader := kv.rf.Start(op)
-		log.Printf("S%d raft start Put i=%d %+v", kv.me, i, op)
-		if !isLeader {
-			reply.Err = ErrWrongLeader
-			return
-		}
-		kv.mu.Lock()
-		kv.putDone[i] = make(chan struct{})
-		kv.mu.Unlock()
-		select {
-		case _, ok := <-kv.putDone[i]:
-			if !ok {
-				continue
-			}
-			log.Printf("S%d raft Put done: %+v", kv.me, op)
-			reply.Err = OK
-			return
-		case <-time.After(RestartInterval):
-			log.Printf("S%d raft Put timeout i=%d", kv.me, i)
-			go func(i int, ch chan struct{}) {
-				log.Printf("dismiss putDone[%d]", i)
-				<-ch
-			}(i, kv.putDone[i])
-		}
+	i, _, isLeader := kv.rf.Start(op)
+	log.Printf("S%d raft start Put i=%d %+v", kv.me, i, op)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	ch := make(chan struct{}, 1)
+	kv.mu.Lock()
+	kv.putDone[i] = ch
+	kv.mu.Unlock()
+	select {
+	case <-ch:
+		log.Printf("S%d raft Put done: %+v", kv.me, op)
+		reply.Err = OK
+		return
+	case <-time.After(TimeoutInterval):
+		reply.Err = ErrTimeout
+		return
 	}
 }
 
@@ -211,16 +197,15 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.getDone = make(map[int]chan string)
 	kv.putDone = make(map[int]chan struct{})
+	kv.dedup = make(map[int32]Op)
 	kv.kv = make(map[string]string)
 	go kv.DoApply()
 
 	return kv
 }
 
-const quiet = false
-
 func init() {
-	if quiet {
+	if raft.DebugVerbosity < 1 {
 		log.SetOutput(ioutil.Discard)
 	}
 }

@@ -30,7 +30,7 @@ const (
 )
 
 var debugStart time.Time
-var debugVerbosity int
+var DebugVerbosity int
 
 func getVerbosity() int {
 	v := os.Getenv("VERBOSE")
@@ -46,14 +46,14 @@ func getVerbosity() int {
 }
 
 func init() {
-	debugVerbosity = getVerbosity()
+	DebugVerbosity = getVerbosity()
 	debugStart = time.Now()
 
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 }
 
 func (rf *Raft) FormatLog() string {
-	if debugVerbosity > 1 {
+	if DebugVerbosity > 1 {
 		s := ""
 		for i := 1; i < len(rf.log); i++ {
 			s += fmt.Sprintf("%v ", rf.log[i])
@@ -66,7 +66,7 @@ func (rf *Raft) FormatLog() string {
 }
 
 func (rf *Raft) FormatFullLog() string {
-	if debugVerbosity > 1 {
+	if DebugVerbosity > 1 {
 		return fmt.Sprintf("%s %s", rf.log[0], rf.FormatLog())
 	} else {
 
@@ -86,7 +86,7 @@ const Padding = "    "
 const quiet = true
 
 func (rf *Raft) Debug(topic logTopic, format string, a ...interface{}) {
-	if debugVerbosity > 0 && !quiet {
+	if DebugVerbosity > 0 && !quiet {
 		log.Print(rf.Sdebug(topic, format, a...))
 	}
 }

@@ -56,19 +56,13 @@ func (ck *Clerk) Get(key string) string {
 		log.Printf("Client call Get leader=%d", leader)
 		ok := ck.servers[leader].Call("KVServer.Get", &args, &reply)
 		if ok {
-			switch reply.Err {
-			case ErrWrongLeader:
-				oldLeader := leader
-				leader = (leader + 1) % int32(len(ck.servers))
-				log.Printf("ErrWrongLeader old_leader=%d new_leader=%d", oldLeader, leader)
-				atomic.StoreInt32(&ck.leader, leader)
-				break
-			case ErrNoKey:
-				return ""
-			case OK:
+			if reply.Err == OK {
 				return reply.Value
+			} else if reply.Err == ErrTimeout {
+				continue
 			}
 		}
+		leader = ck.nextLeader(leader)
 		time.Sleep(RetryInterval)
 	}
 }
@@ -97,19 +91,21 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		log.Printf("Client call PutAppend leader=%d", leader)
 		ok := ck.servers[leader].Call("KVServer.PutAppend", &args, &reply)
 		if ok {
-			switch reply.Err {
-			case ErrWrongLeader:
-				oldLeader := leader
-				leader = (leader + 1) % int32(len(ck.servers))
-				log.Printf("ErrWrongLeader old_leader=%d new_leader=%d", oldLeader, leader)
-				atomic.StoreInt32(&ck.leader, leader)
-				break
-			case OK:
+			if reply.Err == OK {
 				return
+			} else if reply.Err == ErrTimeout {
+				continue
 			}
 		}
+		leader = ck.nextLeader(leader)
 		time.Sleep(RetryInterval)
 	}
+}
+
+func (ck *Clerk) nextLeader(current int32) int32 {
+	next := (current + 1) % int32(len(ck.servers))
+	atomic.StoreInt32(&ck.leader, next)
+	return next
 }
 
 func (ck *Clerk) Put(key string, value string) {

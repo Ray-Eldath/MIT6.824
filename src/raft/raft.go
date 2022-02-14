@@ -901,12 +901,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.persist()
 	rf.matchIndex[rf.me] += 1
 	rf.Debug(dClient, "client start replication with entry %v  %s", entry, rf.FormatState())
-	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
-		rf.replicateCond[i].Signal()
-	}
+	//for i := range rf.peers {
+	//	if i == rf.me {
+	//		continue
+	//	}
+	//	rf.replicateCond[i].Signal()
+	//}
+	rf.BroadcastHeartbeat()
 	return entry.Index, rf.term, rf.state == Leader
 }
 
