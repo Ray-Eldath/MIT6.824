@@ -84,11 +84,9 @@ func (kv *KVServer) DoApply() {
 				}()
 			}
 		} else {
+			kv.readSnapshot(v.Snapshot)
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.Snapshot)
 			kv.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
-			if b {
-				kv.readSnapshot(v.Snapshot)
-			}
 		}
 	}
 }

@@ -255,7 +255,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	defer rf.mu.Unlock()
 	rf.Debug(dSnapshot, "CondInstallSnapshot lastIncludedTerm=%d lastIncludedIndex=%d  %s", lastIncludedTerm, lastIncludedIndex, rf.FormatStateOnly())
 
-	if lastIncludedIndex < rf.commitIndex {
+	if lastIncludedIndex <= rf.commitIndex {
 		rf.Debug(dSnapshot, "rejected outdated CondInstallSnapshot")
 		return false
 	}
@@ -286,16 +286,11 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.Debug(dSnapshot, "snapshot until %d", index)
 	for _, entry := range rf.log {
 		if entry.Index == index {
-			go func() {
-				rf.applyCh <- ApplyMsg{
-					CommandValid:  false,
-					SnapshotValid: true,
-					Snapshot:      snapshot,
-					SnapshotTerm:  entry.Term,
-					SnapshotIndex: entry.Index,
-				}
-			}()
-			return
+			rf.Debug(dSnapshot, "before snapshot:  full log: %v", rf.FormatFullLog())
+			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
+			rf.log[0].Command = nil
+			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.FormatFullLog())
+			rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
 		}
 	}
 }
