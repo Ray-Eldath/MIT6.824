@@ -291,6 +291,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 			rf.log[0].Command = nil
 			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.FormatFullLog())
 			rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
+			return
 		}
 	}
 }
