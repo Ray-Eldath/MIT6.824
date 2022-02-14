@@ -88,8 +88,6 @@ func (kv *KVServer) DoApply() {
 			kv.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
 			if b {
 				kv.readSnapshot(v.Snapshot)
-			} else {
-				kv.checkSnapshot(v.SnapshotIndex)
 			}
 		}
 	}
@@ -118,10 +116,6 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 		kv.dedup[args.ClientId] = op
 	}
 	kv.Debug("applied {%d %+v} value: %s", v.CommandIndex, v.Command, kv.kv[key])
-	kv.checkSnapshot(v.CommandIndex)
-}
-
-func (kv *KVServer) checkSnapshot(i int) {
 	if kv.rf.GetStateSize() >= kv.maxraftstate && kv.maxraftstate != -1 {
 		kv.Debug("checkSnapshot: kv.rf.GetStateSize(%d) >= kv.maxraftstate(%d)", kv.rf.GetStateSize(), kv.maxraftstate)
 		w := new(bytes.Buffer)
@@ -132,7 +126,7 @@ func (kv *KVServer) checkSnapshot(i int) {
 		if err := e.Encode(kv.kv); err != nil {
 			panic(err)
 		}
-		kv.rf.Snapshot(i, w.Bytes())
+		kv.rf.Snapshot(v.CommandIndex, w.Bytes())
 	}
 }
 
