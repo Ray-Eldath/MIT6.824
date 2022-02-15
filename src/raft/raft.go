@@ -688,6 +688,10 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 		}
 
 		rf.mu.Lock()
+		if !rf.needApplyL() {
+			rf.mu.Unlock()
+			continue
+		}
 		rf.lastApplied += 1
 		entry := rf.GetLogAtIndex(rf.lastApplied)
 		if entry == nil {
@@ -709,6 +713,10 @@ func (rf *Raft) needApply() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.Debug(dTrace, "needApply: commitIndex=%d lastApplied=%d", rf.commitIndex, rf.lastApplied)
+	return rf.needApplyL()
+}
+
+func (rf *Raft) needApplyL() bool {
 	return rf.commitIndex > rf.lastApplied
 }
 

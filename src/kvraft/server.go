@@ -30,11 +30,12 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 	serversLen   int
 
-	kv      map[string]string
-	cid     []int32
-	dedup   map[int32]Op
-	getDone map[int]chan string
-	putDone map[int]chan struct{}
+	kv          map[string]string
+	cid         []int32
+	dedup       map[int32]Op
+	getDone     map[int]chan string
+	putDone     map[int]chan struct{}
+	lastApplied int
 }
 
 func (kv *KVServer) readSnapshot(snapshot []byte) {
@@ -87,6 +88,7 @@ func (kv *KVServer) DoApply() {
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.Snapshot)
 			kv.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
 			if b {
+				kv.lastApplied = v.SnapshotIndex
 				kv.readSnapshot(v.Snapshot)
 			}
 		}
@@ -94,11 +96,16 @@ func (kv *KVServer) DoApply() {
 }
 
 func (kv *KVServer) apply(v raft.ApplyMsg) {
+	if v.CommandIndex <= kv.lastApplied {
+		kv.Debug("reject ApplyMsg due to smaller Index. lastApplied=%d v=%+v", kv.lastApplied, v)
+		return
+	}
 	op := v.Command.(Op)
 	var key string
 	switch args := op.Args.(type) {
 	case GetArgs:
 		key = args.Key
+		kv.lastApplied = v.CommandIndex
 		break
 	case PutAppendArgs:
 		key = args.Key
@@ -114,6 +121,7 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 			kv.kv[args.Key] += args.Value
 		}
 		kv.dedup[args.ClientId] = op
+		kv.lastApplied = v.CommandIndex
 	}
 	kv.Debug("applied {%d %+v} value: %s", v.CommandIndex, v.Command, kv.kv[key])
 	if kv.rf.GetStateSize() >= kv.maxraftstate && kv.maxraftstate != -1 {
@@ -261,7 +269,7 @@ const Padding = "    "
 func (kv *KVServer) Debug(format string, a ...interface{}) {
 	preamble := strings.Repeat(Padding, kv.me)
 	epilogue := strings.Repeat(Padding, kv.serversLen-kv.me-1)
-	prefix := fmt.Sprintf("[SERVER] %s%s S%d %s", preamble, raft.Microseconds(time.Now()), kv.me, epilogue)
+	prefix := fmt.Sprintf("%s%s S%d %s[SERVER] ", preamble, raft.Microseconds(time.Now()), kv.me, epilogue)
 	format = prefix + format
 	log.Print(fmt.Sprintf(format, a...))
 }
