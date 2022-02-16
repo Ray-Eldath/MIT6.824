@@ -255,7 +255,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	defer rf.mu.Unlock()
 	rf.Debug(dSnapshot, "CondInstallSnapshot lastIncludedTerm=%d lastIncludedIndex=%d  %s", lastIncludedTerm, lastIncludedIndex, rf.FormatStateOnly())
 
-	if lastIncludedIndex <= rf.commitIndex {
+	if lastIncludedIndex < rf.commitIndex {
 		rf.Debug(dSnapshot, "rejected outdated CondInstallSnapshot")
 		return false
 	}
@@ -345,24 +345,26 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) > 0 {
 		// if pass log consistency check, do merge
 		rf.Debug(dLog, "before merge: %s", rf.FormatLog())
-		appendLeft := 0
-		for i, entry := range args.Entries {
-			if local := rf.GetLogAtIndex(entry.Index); local != nil {
-				if local.Index != entry.Index {
-					panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. entry: %+v  local log at entry.Index: %+v", entry, local))
+		if LogTail(args.Entries).Index >= rf.log[0].Index {
+			appendLeft := 0
+			for i, entry := range args.Entries {
+				if local := rf.GetLogAtIndex(entry.Index); local != nil {
+					if local.Index != entry.Index {
+						panic(rf.Sdebug(dFatal, "LMP violated: local.Index != entry.Index. entry: %+v  local log at entry.Index: %+v", entry, local))
+					}
+					if local.Term != entry.Term {
+						rf.Debug(dLog, "merge conflict at %d", i)
+						rf.log = rf.log[:rf.LogIndexToSubscript(entry.Index)]
+						appendLeft = i
+						break
+					}
+					appendLeft = i + 1
 				}
-				if local.Term != entry.Term {
-					rf.Debug(dLog, "merge conflict at %d", i)
-					rf.log = rf.log[:rf.LogIndexToSubscript(entry.Index)]
-					appendLeft = i
-					break
-				}
-				appendLeft = i + 1
 			}
-		}
-		for i := appendLeft; i < len(args.Entries); i++ {
-			entry := *args.Entries[i]
-			rf.log = append(rf.log, &entry)
+			for i := appendLeft; i < len(args.Entries); i++ {
+				entry := *args.Entries[i]
+				rf.log = append(rf.log, &entry)
+			}
 		}
 		rf.Debug(dLog, "after merge: %s", rf.FormatLog())
 		rf.persist()
