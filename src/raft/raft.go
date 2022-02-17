@@ -620,8 +620,8 @@ func (rf *Raft) DoElection() {
 							}
 							rf.matchIndex[rf.me] = rf.LogTail().Index
 							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
-							rf.BroadcastHeartbeat()
 							rf.becomeLeader()
+							rf.BroadcastHeartbeat()
 						}
 					}
 				}(i, args)
