@@ -334,7 +334,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				}
 				reply.ConflictingTerm = prev.Term
 			} else {
-				reply.ConflictingIndex = len(rf.log)
+				reply.ConflictingIndex = rf.LogTail().Index
 				reply.ConflictingTerm = 0
 			}
 			reply.Success = false
