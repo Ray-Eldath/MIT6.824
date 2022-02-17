@@ -322,7 +322,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.resetTerm(args.Term)
 	}
 
-	if args.PrevLogIndex > 0 {
+	if args.PrevLogIndex > 0 && args.PrevLogIndex >= rf.log[0].Index {
 		if prev := rf.GetLogAtIndex(args.PrevLogIndex); prev == nil || prev.Term != args.PrevLogTerm {
 			rf.Debug(dLog, "log consistency check failed. local log at prev {%d t%d}: %+v  full log: %s", args.PrevLogIndex, args.PrevLogTerm, prev, rf.FormatFullLog())
 			if prev != nil {
