@@ -65,16 +65,13 @@ func (sc *ShardCtrler) rebalance(conf *Config) {
 	}
 	sc.LeaderDebug("%d ct=%v", conf.Num, ct)
 	for max, maxi, min, mini := maxmin(ct, gs); max-min > 1; max, maxi, min, mini = maxmin(ct, gs) {
-		c := (max - min) / 2
-		ts := ct[maxi][0:c]
-		sc.LeaderDebug("%d max=%d maxi=%d min=%d mini=%d ts=%v", conf.Num, max, maxi, min, mini, ts)
-		ct[maxi] = ct[maxi][c:]
-		ct[mini] = append(ct[mini], ts...)
-		for _, t := range ts {
-			conf.Shards[t] = mini
-		}
-		sc.LeaderDebug("%d ct=%v conf.Shards=%v", conf.Num, ct, conf.Shards)
+		sc.LeaderDebug("%d max=%d maxi=%d min=%d mini=%d", conf.Num, max, maxi, min, mini)
+		t := ct[maxi][0]
+		ct[maxi] = ct[maxi][1:]
+		ct[mini] = append(ct[mini], t)
+		conf.Shards[t] = mini
 	}
+	sc.LeaderDebug("%d rebalanced: shards=%v ct=%v", conf.Num, conf.Shards, ct)
 }
 
 func maxmin(ct map[int][]int, gs []int) (max int, maxi int, min int, mini int) {
@@ -91,12 +88,8 @@ func maxmin(ct map[int][]int, gs []int) (max int, maxi int, min int, mini int) {
 			mini = g
 		}
 	}
-	if len(ct[0]) > 0 { // empty ct[0] before doing anything else
-		if min == math.MaxInt {
-			return 0, 0, 0, 0
-		} else {
-			return len(ct[0]) * 2, 0, 0, mini
-		}
+	if len(ct[0]) > 0 {
+		return math.MaxInt, 0, min, mini
 	} else {
 		return max, maxi, min, mini
 	}
