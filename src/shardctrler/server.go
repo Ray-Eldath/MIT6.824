@@ -207,6 +207,7 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
+	sc.Debug("Query")
 	if _, isLeader := sc.rf.GetState(); !isLeader {
 		reply.WrongLeader = true
 		return
