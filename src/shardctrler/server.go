@@ -4,6 +4,7 @@ import "6.824/raft"
 import "6.824/labrpc"
 import (
 	"6.824/labgob"
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -17,16 +18,30 @@ import (
 )
 
 type ShardCtrler struct {
-	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
+	mu           sync.Mutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	maxraftstate int
 
 	configs     []Config // indexed by config num
 	dedup       map[int32]interface{}
 	done        map[int]chan int
 	lastApplied int
 	serversLen  int
+}
+
+func (sc *ShardCtrler) readSnapshot(snapshot []byte) {
+	var dedup map[int32]interface{}
+	var configs []Config
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	if e := d.Decode(&dedup); e != nil {
+		dedup = make(map[int32]interface{})
+	}
+	_ = d.Decode(&configs)
+	sc.dedup = dedup
+	sc.configs = configs
 }
 
 func (sc *ShardCtrler) ConfigsTail() Config {
@@ -124,6 +139,13 @@ func (sc *ShardCtrler) DoApply() {
 			go func() {
 				ch <- num
 			}()
+		} else {
+			b := sc.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.Snapshot)
+			sc.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
+			if b {
+				sc.lastApplied = v.SnapshotIndex
+				sc.readSnapshot(v.Snapshot)
+			}
 		}
 	}
 }
@@ -192,32 +214,54 @@ func (sc *ShardCtrler) apply(v raft.ApplyMsg) {
 	sc.dedup[args.ClientId] = v.Command
 	sc.lastApplied = v.CommandIndex
 	sc.Debug("applied {%d %+v}", v.CommandIndex, v.Command)
+	if sc.rf.GetStateSize() >= sc.maxraftstate && sc.maxraftstate != -1 {
+		sc.Debug("checkSnapshot: sc.rf.GetStateSize(%d) >= sc.maxraftstate(%d)", sc.rf.GetStateSize(), sc.maxraftstate)
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		if err := e.Encode(sc.dedup); err != nil {
+			panic(err)
+		}
+		if err := e.Encode(sc.configs); err != nil {
+			panic(err)
+		}
+		sc.rf.Snapshot(v.CommandIndex, w.Bytes())
+	}
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
-	reply.WrongLeader, reply.Err = sc.Command("Join", *args)
+	_, reply.WrongLeader, reply.Err = sc.Command("Join", *args)
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
-	reply.WrongLeader, reply.Err = sc.Command("Leave", *args)
+	_, reply.WrongLeader, reply.Err = sc.Command("Leave", *args)
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	reply.WrongLeader, reply.Err = sc.Command("Move", *args)
+	_, reply.WrongLeader, reply.Err = sc.Command("Move", *args)
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	sc.Debug("Query")
-	if _, isLeader := sc.rf.GetState(); !isLeader {
-		reply.WrongLeader = true
-		return
+	i, wl, err := sc.Command("Query", *args)
+	reply.WrongLeader = wl
+	reply.Err = err
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if !wl && err == OK {
+		reply.Config = sc.configs[i]
 	}
-	op := *args
-	i, _, isLeader := sc.rf.Start(op)
-	sc.Debug("raft start Query i=%d %+v", i, op)
+}
+
+const TimeoutInterval = 500 * time.Millisecond
+
+// Command args needs to be raw type (not pointer)
+func (sc *ShardCtrler) Command(ty string, args interface{}) (i int, wrongLeader bool, err Err) {
+	if _, isLeader := sc.rf.GetState(); !isLeader {
+		return -1, true, OK
+	}
+	i, _, isLeader := sc.rf.Start(args)
+	sc.Debug("raft start %s i=%d %+v", ty, i, args)
 	if !isLeader {
-		reply.WrongLeader = true
-		return
+		return -1, true, OK
 	}
 	ch := make(chan int, 1)
 	sc.mu.Lock()
@@ -225,41 +269,10 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	sc.mu.Unlock()
 	select {
 	case v := <-ch:
-		sc.mu.Lock()
-		conf := sc.configs[v]
-		sc.mu.Unlock()
-		sc.Debug("raft Query done: op %+v => configs[%d] => %+v", op, v, conf)
-		reply.Config = conf
-		reply.Err = OK
-		return
-	case <-time.After(TimeoutInterval):
-		reply.Err = ErrTimeout
-		return
-	}
-}
-
-const TimeoutInterval = 500 * time.Millisecond
-
-// Command args needs to be raw type (not pointer)
-func (sc *ShardCtrler) Command(ty string, args interface{}) (wrongLeader bool, err Err) {
-	if _, isLeader := sc.rf.GetState(); !isLeader {
-		return true, OK
-	}
-	i, _, isLeader := sc.rf.Start(args)
-	sc.Debug("raft start %s i=%d %+v", ty, i, args)
-	if !isLeader {
-		return true, OK
-	}
-	ch := make(chan int, 1)
-	sc.mu.Lock()
-	sc.done[i] = ch
-	sc.mu.Unlock()
-	select {
-	case <-ch:
 		sc.Debug("raft %s done: %+v ConfigsTail=%+v", ty, args, sc.ConfigsTail())
-		return false, OK
+		return v, false, OK
 	case <-time.After(TimeoutInterval):
-		return false, ErrTimeout
+		return -1, false, ErrTimeout
 	}
 }
 
@@ -301,6 +314,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.serversLen = len(servers)
 	sc.done = make(map[int]chan int)
 	sc.dedup = make(map[int32]interface{})
+	sc.maxraftstate = 1000
 	go sc.DoApply()
 
 	return sc
@@ -308,7 +322,12 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 
 const Padding = "    "
 
+var quiet bool
+
 func (sc *ShardCtrler) Debug(format string, a ...interface{}) {
+	if quiet {
+		return
+	}
 	preamble := strings.Repeat(Padding, sc.me)
 	epilogue := strings.Repeat(Padding, sc.serversLen-sc.me-1)
 	prefix := fmt.Sprintf("%s%s S%d %s[SERVER] ", preamble, raft.Microseconds(time.Now()), sc.me, epilogue)
@@ -331,4 +350,5 @@ func init() {
 	if level < 1 {
 		log.SetOutput(ioutil.Discard)
 	}
+	_, quiet = os.LookupEnv("SHARDCTL_QUIET")
 }
