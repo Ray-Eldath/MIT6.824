@@ -10,6 +10,7 @@ package shardkv
 
 import "6.824/labrpc"
 import "crypto/rand"
+import rand2 "math/rand"
 import "math/big"
 import "6.824/shardctrler"
 import "time"
@@ -39,7 +40,11 @@ type Clerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
-	// You will have to modify this struct.
+	cid      int32
+}
+
+func (ck *Clerk) args() Args {
+	return Args{ClientId: ck.cid, RequestId: nrand()}
 }
 
 //
@@ -55,7 +60,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck := new(Clerk)
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
-	// You'll have to add code here.
+	ck.cid = rand2.Int31()
 	return ck
 }
 
@@ -66,8 +71,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // You will have to modify this function.
 //
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
-	args.Key = key
+	args := GetArgs{Key: key}
 
 	for {
 		shard := key2shard(key)
@@ -100,11 +104,12 @@ func (ck *Clerk) Get(key string) string {
 // You will have to modify this function.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
-	args.Key = key
-	args.Value = value
-	args.Op = op
-
+	args := PutAppendArgs{Key: key, Value: value, Args: ck.args()}
+	if op == "Put" {
+		args.Type = PutOp
+	} else {
+		args.Type = AppendOp
+	}
 
 	for {
 		shard := key2shard(key)
