@@ -4,7 +4,6 @@ import "6.824/raft"
 import "6.824/labrpc"
 import (
 	"6.824/labgob"
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -18,30 +17,16 @@ import (
 )
 
 type ShardCtrler struct {
-	mu           sync.Mutex
-	me           int
-	rf           *raft.Raft
-	applyCh      chan raft.ApplyMsg
-	maxraftstate int
+	mu      sync.Mutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
 
 	configs     []Config // indexed by config num
 	dedup       map[int32]interface{}
 	done        map[int]chan int
 	lastApplied int
 	serversLen  int
-}
-
-func (sc *ShardCtrler) readSnapshot(snapshot []byte) {
-	var dedup map[int32]interface{}
-	var configs []Config
-	r := bytes.NewBuffer(snapshot)
-	d := labgob.NewDecoder(r)
-	if e := d.Decode(&dedup); e != nil {
-		dedup = make(map[int32]interface{})
-	}
-	_ = d.Decode(&configs)
-	sc.dedup = dedup
-	sc.configs = configs
 }
 
 func (sc *ShardCtrler) ConfigsTail() Config {
@@ -139,13 +124,6 @@ func (sc *ShardCtrler) DoApply() {
 			go func() {
 				ch <- num
 			}()
-		} else {
-			b := sc.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.Snapshot)
-			sc.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
-			if b {
-				sc.lastApplied = v.SnapshotIndex
-				sc.readSnapshot(v.Snapshot)
-			}
 		}
 	}
 }
@@ -214,18 +192,6 @@ func (sc *ShardCtrler) apply(v raft.ApplyMsg) {
 	sc.dedup[args.ClientId] = v.Command
 	sc.lastApplied = v.CommandIndex
 	sc.Debug("applied {%d %+v}", v.CommandIndex, v.Command)
-	if sc.rf.GetStateSize() >= sc.maxraftstate && sc.maxraftstate != -1 {
-		sc.Debug("checkSnapshot: sc.rf.GetStateSize(%d) >= sc.maxraftstate(%d)", sc.rf.GetStateSize(), sc.maxraftstate)
-		w := new(bytes.Buffer)
-		e := labgob.NewEncoder(w)
-		if err := e.Encode(sc.dedup); err != nil {
-			panic(err)
-		}
-		if err := e.Encode(sc.configs); err != nil {
-			panic(err)
-		}
-		sc.rf.Snapshot(v.CommandIndex, w.Bytes())
-	}
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
@@ -314,7 +280,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.serversLen = len(servers)
 	sc.done = make(map[int]chan int)
 	sc.dedup = make(map[int32]interface{})
-	sc.maxraftstate = 1000
 	go sc.DoApply()
 
 	return sc
