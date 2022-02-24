@@ -191,7 +191,9 @@ func (sc *ShardCtrler) apply(v raft.ApplyMsg) {
 	}
 	sc.dedup[args.ClientId] = v.Command
 	sc.lastApplied = v.CommandIndex
-	sc.Debug("applied {%d %+v}", v.CommandIndex, v.Command)
+	sc.mu.Lock()
+	sc.Debug("applied {%d %+v} configs: %+v", v.CommandIndex, v.Command, sc.configs)
+	sc.mu.Unlock()
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
@@ -207,14 +209,24 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	i, wl, err := sc.Command("Query", *args)
-	reply.WrongLeader = wl
-	reply.Err = err
+	num := args.Num
+	if _, isLeader := sc.rf.GetState(); !isLeader {
+		reply.WrongLeader = true
+		return
+	}
+	if time.Since(sc.rf.GetLease()) >= raft.LeaseDuration {
+		reply.Err = ErrTimeout
+		return
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	if !wl && err == OK {
-		reply.Config = sc.configs[i]
+	if num < 0 || num > sc.ConfigsTailL().Num {
+		num = sc.ConfigsTailL().Num
 	}
+	reply.WrongLeader = false
+	reply.Err = OK
+	reply.Config = sc.configs[num]
+	sc.Debug("Query done: config[%d]=%+v ConfigsTail=%+v", num, reply.Config, sc.ConfigsTailL())
 }
 
 const TimeoutInterval = 500 * time.Millisecond
@@ -223,6 +235,9 @@ const TimeoutInterval = 500 * time.Millisecond
 func (sc *ShardCtrler) Command(ty string, args interface{}) (i int, wrongLeader bool, err Err) {
 	if _, isLeader := sc.rf.GetState(); !isLeader {
 		return -1, true, OK
+	}
+	if time.Since(sc.rf.GetLease()) >= raft.LeaseDuration {
+		return -1, false, ErrTimeout
 	}
 	i, _, isLeader := sc.rf.Start(args)
 	sc.Debug("raft start %s i=%d %+v", ty, i, args)

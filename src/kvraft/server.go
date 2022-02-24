@@ -31,10 +31,11 @@ type KVServer struct {
 	serversLen   int
 
 	kv          map[string]string
+	kvMu        sync.Mutex
 	cid         []int32
 	dedup       map[int32]Op
 	getDone     map[int]chan string
-	putDone     map[int]chan struct{}
+	done        map[int]chan struct{}
 	lastApplied int
 }
 
@@ -65,26 +66,15 @@ func (kv *KVServer) DoApply() {
 				continue
 			}
 			kv.mu.Lock()
-			switch args := v.Command.(Op).Args.(type) {
-			case GetArgs:
-				getCh := kv.getDone[v.CommandIndex]
-				val := ""
-				if s, ok := kv.kv[args.Key]; ok {
-					val = s
-				}
-				kv.mu.Unlock()
-				go func() {
-					getCh <- val
-				}()
-				break
+			switch v.Command.(Op).Args.(type) {
 			case PutAppendArgs:
-				putCh := kv.putDone[v.CommandIndex]
+				ch := kv.done[v.CommandIndex]
 				kv.mu.Unlock()
 				go func() {
-					putCh <- struct{}{}
+					ch <- struct{}{}
 				}()
 			}
-		} else {
+		} else if v.SnapshotValid {
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.Snapshot)
 			kv.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, len(v.Snapshot))
 			if b {
@@ -100,6 +90,8 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 		kv.Debug("reject ApplyMsg due to smaller Index. lastApplied=%d v=%+v", kv.lastApplied, v)
 		return
 	}
+	kv.kvMu.Lock()
+	defer kv.kvMu.Unlock()
 	op := v.Command.(Op)
 	var key string
 	switch args := op.Args.(type) {
@@ -141,35 +133,19 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 const TimeoutInterval = 500 * time.Millisecond
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	if _, isLeader := kv.rf.GetState(); !isLeader {
+	if _, isLeader := kv.rf.GetState(); !isLeader || time.Since(kv.rf.GetLease()) >= raft.LeaseDuration {
 		reply.Err = ErrWrongLeader
 		return
 	}
-	op := Op{*args}
-	i, _, isLeader := kv.rf.Start(op)
-	kv.Debug("raft start Get i=%d %+v", i, op)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	ch := make(chan string, 1)
-	kv.mu.Lock()
-	kv.getDone[i] = ch
-	kv.mu.Unlock()
-	select {
-	case v := <-ch:
-		kv.Debug("raft Get done: %+v => %+v", op, v)
-		reply.Value = v
-		reply.Err = OK
-		return
-	case <-time.After(TimeoutInterval):
-		reply.Err = ErrTimeout
-		return
-	}
+	kv.kvMu.Lock()
+	val := kv.kv[args.Key]
+	kv.kvMu.Unlock()
+	kv.Debug("Get kv[%s]=%s", args.Key, val)
+	reply.Value, reply.Err = val, OK
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	if _, isLeader := kv.rf.GetState(); !isLeader {
+	if _, isLeader := kv.rf.GetState(); !isLeader || time.Since(kv.rf.GetLease()) >= raft.LeaseDuration {
 		reply.Err = ErrWrongLeader
 		return
 	}
@@ -182,7 +158,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	ch := make(chan struct{}, 1)
 	kv.mu.Lock()
-	kv.putDone[i] = ch
+	kv.done[i] = ch
 	kv.mu.Unlock()
 	select {
 	case <-ch:
@@ -245,7 +221,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.getDone = make(map[int]chan string)
-	kv.putDone = make(map[int]chan struct{})
+	kv.done = make(map[int]chan struct{})
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("StartKVServer dedup=%v  kv=%v", kv.dedup, kv.kv)
 	go kv.DoApply()
