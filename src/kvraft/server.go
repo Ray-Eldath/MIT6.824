@@ -16,10 +16,6 @@ import (
 	"time"
 )
 
-type Op struct {
-	Args interface{}
-}
-
 type KVServer struct {
 	mu      sync.Mutex
 	me      int
@@ -33,25 +29,25 @@ type KVServer struct {
 	kv          map[string]string
 	kvMu        sync.Mutex
 	cid         []int32
-	dedup       map[int32]Op
+	dedup       map[int32]interface{}
 	getDone     map[int]chan string
 	done        map[int]chan struct{}
 	lastApplied int
 }
 
 func (kv *KVServer) readSnapshot(snapshot []byte) {
-	var dedup map[int32]Op
+	var dedup map[int32]interface{}
 	var kvmap map[string]string
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	if e := d.Decode(&dedup); e != nil {
-		dedup = make(map[int32]Op)
+	if e := d.Decode(&dedup); e == nil {
+		kv.dedup = dedup
 	}
-	if e := d.Decode(&kvmap); e != nil {
-		kvmap = make(map[string]string)
+	if e := d.Decode(&kvmap); e == nil {
+		kv.kv = kvmap
 	}
-	kv.dedup = dedup
-	kv.kv = kvmap
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	kv.Debug("readSnapshot: kv=%v", kvmap)
 }
 
@@ -67,7 +63,7 @@ func (kv *KVServer) DoApply() {
 				continue
 			}
 			kv.mu.Lock()
-			switch v.Command.(Op).Args.(type) {
+			switch v.Command.(type) {
 			case PutAppendArgs:
 				ch := kv.done[v.CommandIndex]
 				kv.mu.Unlock()
@@ -93,9 +89,9 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 	}
 	kv.kvMu.Lock()
 	defer kv.kvMu.Unlock()
-	op := v.Command.(Op)
+	op := v.Command
 	var key string
-	switch args := op.Args.(type) {
+	switch args := op.(type) {
 	case GetArgs:
 		key = args.Key
 		kv.lastApplied = v.CommandIndex
@@ -103,7 +99,7 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 	case PutAppendArgs:
 		key = args.Key
 		if dup, ok := kv.dedup[args.ClientId]; ok {
-			if putDup, ok := dup.Args.(PutAppendArgs); ok && putDup.RequestId == args.RequestId {
+			if putDup, ok := dup.(PutAppendArgs); ok && putDup.RequestId == args.RequestId {
 				kv.Debug("duplicate found for putDup=%+v  args=%+v", putDup, args)
 				break
 			}
@@ -150,7 +146,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
-	op := Op{*args}
+	op := *args
 	i, _, isLeader := kv.rf.Start(op)
 	kv.Debug("raft start Put i=%d %+v", i, op)
 	if !isLeader {
@@ -210,7 +206,6 @@ func (kv *KVServer) killed() bool {
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
 	labgob.Register(GetArgs{})
 	labgob.Register(PutAppendArgs{})
 
@@ -223,6 +218,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.getDone = make(map[int]chan string)
 	kv.done = make(map[int]chan struct{})
+	kv.dedup = make(map[int32]interface{})
+	kv.kv = make(map[string]string)
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("StartKVServer dedup=%v  kv=%v", kv.dedup, kv.kv)
 	go kv.DoApply()
