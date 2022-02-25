@@ -50,6 +50,7 @@ type ApplyMsg struct {
 	Snapshot      []byte
 	SnapshotTerm  int
 	SnapshotIndex int
+	SnapshotSeq   int
 }
 
 type State int8
@@ -81,7 +82,11 @@ type LogEntry struct {
 }
 
 func (e *LogEntry) String() string {
-	return fmt.Sprintf("{%d t%d %v}", e.Index, e.Term, e.Command)
+	if e.Valid {
+		return fmt.Sprintf("{%d s%d t%d %v}", e.Index, e.Seq, e.Term, e.Command)
+	} else {
+		return fmt.Sprintf("<%d s%d t%d>", e.Index, e.Seq, e.Term)
+	}
 }
 
 //
@@ -259,7 +264,7 @@ type AppendEntriesReply struct {
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 //
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
+func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, lastIncludedSeq int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.Debug(dSnapshot, "CondInstallSnapshot lastIncludedTerm=%d lastIncludedIndex=%d  %s", lastIncludedTerm, lastIncludedIndex, rf.FormatStateOnly())
@@ -277,6 +282,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	}
 	rf.log[0].Index = lastIncludedIndex
 	rf.log[0].Term = lastIncludedTerm
+	rf.log[0].Seq = lastIncludedSeq
 	rf.log[0].Command = nil
 	rf.commitIndex = lastIncludedIndex
 	rf.lastApplied = lastIncludedIndex
@@ -292,9 +298,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) Snapshot(seq int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.Debug(dSnapshot, "snapshot until %d", seq)
-	for _, entry := range rf.log {
+	for i := len(rf.log) - 1; i >= 0; i-- {
+		entry := rf.log[i]
 		if entry.Seq == seq {
+			rf.Debug(dSnapshot, "snapshot until %d (seq %d)", entry.Index, seq)
 			rf.Debug(dSnapshot, "before snapshot:  full log: %v", rf.FormatFullLog())
 			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
 			rf.log[0].Command = nil
@@ -511,6 +518,7 @@ type InstallSnapshotArgs struct {
 	Term              int
 	LeaderId          int
 	LastIncludedIndex int
+	LastIncludedSeq   int
 	LastIncludedTerm  int
 	Data              []byte
 }
@@ -530,7 +538,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 	rf.lastHeartbeat = now
 
-	rf.Debug(dSnapshot, "receive InstallSnapshot from S%d args.term=%d LastIncludedIndex=%d LastIncludedTerm=%d", args.LeaderId, args.Term, args.LastIncludedIndex, args.LastIncludedTerm)
+	rf.Debug(dSnapshot, "receive InstallSnapshot from S%d args.term=%d LastIncludedIndex=%d LastIncludedSeq=%d LastIncludedTerm=%d", args.LeaderId, args.Term, args.LastIncludedIndex, args.LastIncludedSeq, args.LastIncludedTerm)
 	if rf.state == Candidate && args.Term >= rf.term {
 		rf.Debug(dSnapshot, "received term %d >= currentTerm %d from S%d, leader is legitimate", args.Term, rf.term, args.LeaderId)
 		rf.becomeFollower()
@@ -552,6 +560,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 			Snapshot:      args.Data,
 			SnapshotTerm:  args.LastIncludedTerm,
 			SnapshotIndex: args.LastIncludedIndex,
+			SnapshotSeq:   args.LastIncludedSeq,
 		}
 	}()
 }
@@ -784,6 +793,7 @@ func (rf *Raft) Replicate(peer int, lease *Lease) {
 			Term:              rf.term,
 			LeaderId:          rf.me,
 			LastIncludedIndex: rf.log[0].Index,
+			LastIncludedSeq:   rf.log[0].Seq,
 			LastIncludedTerm:  rf.log[0].Term,
 			Data:              rf.persister.ReadSnapshot(),
 		}
