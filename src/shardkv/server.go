@@ -72,7 +72,7 @@ func (kv *ShardKV) DoApply() {
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.SnapshotSeq, v.Snapshot)
 			kv.Debug("CondInstallSnapshot %t SnapshotTerm=%d SnapshotIndex=%d SnapshotSeq=%d len(Snapshot)=%d", b, v.SnapshotTerm, v.SnapshotIndex, v.SnapshotSeq, len(v.Snapshot))
 			if b {
-				kv.lastApplied = v.SnapshotIndex
+				kv.lastApplied = v.SnapshotSeq
 				kv.readSnapshot(v.Snapshot)
 			}
 		}
