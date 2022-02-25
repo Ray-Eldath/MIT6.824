@@ -118,6 +118,7 @@ type Raft struct {
 
 	applyCh      chan ApplyMsg
 	leaseStartAt time.Time
+	leaseSyncing bool
 }
 
 func (rf *Raft) IsMajority(vote int) bool {
@@ -160,10 +161,12 @@ func (rf *Raft) resetTerm(term int) {
 
 func (rf *Raft) becomeFollower() {
 	rf.state = Follower
+	rf.leaseSyncing = false
 }
 
 func (rf *Raft) becomeCandidate() {
 	rf.state = Candidate
+	rf.leaseSyncing = false
 }
 
 func (rf *Raft) becomeLeader() {
@@ -179,10 +182,11 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	term = rf.term
-	isleader = rf.state == Leader
+	isleader = rf.state == Leader && !rf.leaseSyncing && time.Since(rf.leaseStartAt) < LeaseDuration
 	return term, isleader
 }
 
+// Deprecated
 func (rf *Raft) GetLease() time.Time {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -640,13 +644,13 @@ func (rf *Raft) DoElection() {
 							rf.matchIndex[rf.me] = rf.LogTail().Index
 							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
 							rf.becomeLeader()
+							rf.leaseSyncing = true
 							rf.StartL(LogEntry{
 								Valid: false,
 								Term:  rf.term,
 								Index: rf.LogTail().Index + 1,
 								Seq:   rf.LogTail().Seq,
 							})
-							rf.BroadcastHeartbeat()
 						}
 					}
 				}(i, args)
@@ -721,6 +725,9 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 			continue
 		}
 		rf.lastApplied += 1
+		if rf.leaseSyncing && !rf.needApplyL() {
+			rf.leaseSyncing = false
+		}
 		entry := rf.GetLogAtIndex(rf.lastApplied)
 		if entry == nil {
 			panic(rf.Sdebug(dFatal, "entry == nil  %s", rf.FormatState()))

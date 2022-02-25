@@ -130,7 +130,7 @@ func (kv *KVServer) apply(v raft.ApplyMsg) {
 const TimeoutInterval = 500 * time.Millisecond
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	if _, isLeader := kv.rf.GetState(); !isLeader || time.Since(kv.rf.GetLease()) >= raft.LeaseDuration {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
@@ -142,7 +142,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	if _, isLeader := kv.rf.GetState(); !isLeader || time.Since(kv.rf.GetLease()) >= raft.LeaseDuration {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
