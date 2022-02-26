@@ -309,6 +309,7 @@ func (rf *Raft) Snapshot(seq int, snapshot []byte) {
 			rf.Debug(dSnapshot, "before snapshot:  full log: %v", rf.FormatFullLog())
 			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
 			rf.log[0].Command = nil
+			rf.lastApplied = entry.Index
 			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.FormatFullLog())
 			rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
 			return
