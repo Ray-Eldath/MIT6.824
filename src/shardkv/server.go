@@ -104,7 +104,7 @@ func (kv *ShardKV) DoApply() {
 					kv.rf.Snapshot(v.CommandIndex, w.Bytes())
 				}
 				val, applied := kv.apply(v)
-				if !kv.isLeader() || !applied {
+				if !applied {
 					continue
 				}
 				kv.mu.Lock()
