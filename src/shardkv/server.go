@@ -151,7 +151,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		if dup, ok := kv.dedup[args.ClientId]; ok {
 			if putDup, ok := dup.(PutAppendArgs); ok && putDup.RequestId == args.RequestId {
 				kv.Debug("duplicate found for putDup=%+v  args=%+v", putDup, args)
-				return "", false
+				break
 			}
 		}
 		if args.Type == PutOp {
