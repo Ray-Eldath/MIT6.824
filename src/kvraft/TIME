@@ -1,0 +1,33 @@
+2A|2B x2000:
+avg real 50.6648
+avg user 1.04767
+avg sys 0.295595
+
+2C x1000:
+avg real 122.481
+avg user 18.9086
+avg sys 1.38669
+
+2D x1000:
+avg real 157.723
+avg user 3.08175
+avg sys 0.96717
+
+total 2:
+
+3A x1000:
+avg real 332.502
+avg user 209.43
+avg sys 4.59431
+
+3B x1000:
+avg real 212.996
+avg user 75.8264
+avg sys 5.97726
+
+total 3:
+
+4A x2000:
+avg real 4.56421
+avg user 0.119555
+avg sys 0.009385
