@@ -140,7 +140,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
 			return "", false
 		}
-		kv.LeaderDebug("applied Get {%d %v} value: %s", v.CommandIndex, v.Command, kv.kv[key])
+		kv.LeaderDebug("%d applied Get {%d %v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case PutAppendArgs:
 		key = args.Key
@@ -160,10 +160,10 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.kv[key] += args.Value
 		}
 		kv.dedup[args.ClientId] = v.Command
-		kv.LeaderDebug("applied PutAppend {%d %+v} value: %s", v.CommandIndex, v.Command, kv.kv[key])
+		kv.LeaderDebug("%d applied PutAppend {%d %+v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
-		kv.Debug("%d applying Handoff from gid %d: %+v", kv.gid, args.Origin, args)
+		kv.Debug("%d applying Handoff from gid %d: %+v config: %+v", kv.gid, args.Origin, args, kv.config)
 		for k, v := range args.Kv {
 			kv.kv[k] = v
 		}
@@ -265,7 +265,7 @@ func (kv *ShardKV) Command(ty string, key string, args interface{}) (val string,
 func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err) {
 	i, _, isLeader := kv.rf.Start(cmd)
 	kv.mu.Lock()
-	kv.Debug("%d raft start %s i=%d %+v config=%+v", kv.gid, ty, i, cmd, kv.config)
+	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, kv.config)
 	if !isLeader {
 		kv.mu.Unlock()
 		return "", ErrWrongLeader
