@@ -89,6 +89,15 @@ func (kv *ShardKV) DoApply() {
 				}
 				kv.mu.Unlock()
 			} else {
+				if val, applied := kv.apply(v); applied && kv.isLeader() {
+					kv.mu.Lock()
+					ch := kv.done[v.CommandIndex]
+					kv.mu.Unlock()
+					go func() {
+						fmt.Printf("\nch=%+v\n", ch)
+						ch <- val
+					}()
+				}
 				if kv.maxraftstate != -1 && kv.rf.GetStateSize() >= kv.maxraftstate {
 					kv.Debug("checkSnapshot: kv.rf.GetStateSize(%d) >= kv.maxraftstate(%d)", kv.rf.GetStateSize(), kv.maxraftstate)
 					w := new(bytes.Buffer)
@@ -103,16 +112,6 @@ func (kv *ShardKV) DoApply() {
 					kv.mu.Unlock()
 					kv.rf.Snapshot(v.CommandIndex, w.Bytes())
 				}
-				val, applied := kv.apply(v)
-				if !kv.isLeader() || !applied {
-					continue
-				}
-				kv.mu.Lock()
-				ch := kv.done[v.CommandIndex]
-				kv.mu.Unlock()
-				go func() {
-					ch <- val
-				}()
 			}
 		} else if v.SnapshotValid {
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.SnapshotSeq, v.Snapshot)
