@@ -94,7 +94,7 @@ func (kv *ShardKV) DoApply() {
 					kv.doneMu.Lock()
 					ch := kv.done[v.CommandIndex]
 					kv.doneMu.Unlock()
-					fmt.Printf("\nch=%+v\n", ch)
+					fmt.Printf("\n%d %d ch=%+v\n\n", kv.gid, v.CommandIndex, ch)
 					ch <- val
 				}
 				if kv.maxraftstate != -1 && kv.rf.GetStateSize() >= kv.maxraftstate {
@@ -264,6 +264,7 @@ func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err
 	kv.mu.Lock()
 	conf := kv.config
 	kv.mu.Unlock()
+
 	kv.doneMu.Lock()
 	i, _, isLeader := kv.rf.Start(cmd)
 	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, conf)
