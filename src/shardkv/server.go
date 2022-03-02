@@ -29,6 +29,7 @@ type ShardKV struct {
 	kv          map[string]string
 	dedup       map[int32]interface{}
 	done        map[int]chan string
+	doneMu      sync.Mutex
 	lastApplied int
 }
 
@@ -90,13 +91,11 @@ func (kv *ShardKV) DoApply() {
 				kv.mu.Unlock()
 			} else {
 				if val, applied := kv.apply(v); applied && kv.isLeader() {
-					kv.mu.Lock()
+					kv.doneMu.Lock()
 					ch := kv.done[v.CommandIndex]
-					kv.mu.Unlock()
-					go func() {
-						fmt.Printf("\nch=%+v\n", ch)
-						ch <- val
-					}()
+					kv.doneMu.Unlock()
+					fmt.Printf("\nch=%+v\n", ch)
+					ch <- val
 				}
 				if kv.maxraftstate != -1 && kv.rf.GetStateSize() >= kv.maxraftstate {
 					kv.Debug("checkSnapshot: kv.rf.GetStateSize(%d) >= kv.maxraftstate(%d)", kv.rf.GetStateSize(), kv.maxraftstate)
@@ -264,14 +263,16 @@ func (kv *ShardKV) Command(ty string, key string, args interface{}) (val string,
 func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err) {
 	i, _, isLeader := kv.rf.Start(cmd)
 	kv.mu.Lock()
-	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, kv.config)
+	conf := kv.config
+	kv.mu.Unlock()
+	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, conf)
 	if !isLeader {
-		kv.mu.Unlock()
 		return "", ErrWrongLeader
 	}
 	ch := make(chan string, 1)
+	kv.doneMu.Lock()
 	kv.done[i] = ch
-	kv.mu.Unlock()
+	kv.doneMu.Unlock()
 	select {
 	case v := <-ch:
 		kv.Debug("%d raft %s done: %+v => %v", kv.gid, ty, cmd, v)
