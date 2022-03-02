@@ -94,8 +94,10 @@ func (kv *ShardKV) DoApply() {
 					kv.doneMu.Lock()
 					ch := kv.done[v.CommandIndex]
 					kv.doneMu.Unlock()
-					fmt.Printf("\n%d %d ch=%+v\n\n", kv.gid, v.CommandIndex, ch)
-					ch <- val
+					go func(v raft.ApplyMsg) {
+						fmt.Printf("\n%d %d ch=%+v\n\n", kv.gid, v.CommandIndex, ch)
+						ch <- val
+					}(v)
 				}
 				if kv.maxraftstate != -1 && kv.rf.GetStateSize() >= kv.maxraftstate {
 					kv.Debug("checkSnapshot: kv.rf.GetStateSize(%d) >= kv.maxraftstate(%d)", kv.rf.GetStateSize(), kv.maxraftstate)

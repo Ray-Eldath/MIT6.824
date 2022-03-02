@@ -67,9 +67,10 @@ func (kv *KVServer) DoApply() {
 			case PutAppendArgs:
 				ch := kv.done[v.CommandIndex]
 				kv.mu.Unlock()
-				go func() {
+				go func(v raft.ApplyMsg) {
+					fmt.Printf("\n%d ch=%+v\n\n", v.CommandIndex, ch)
 					ch <- struct{}{}
-				}()
+				}(v)
 			}
 		} else if v.SnapshotValid {
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.SnapshotSeq, v.Snapshot)
