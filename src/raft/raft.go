@@ -112,11 +112,11 @@ type Raft struct {
 	commitIndex   int
 	lastApplied   int
 	applyCond     *sync.Cond
+	applyCh       chan ApplyMsg
 	nextIndex     []int
 	matchIndex    []int
 	replicateCond []*sync.Cond
 
-	applyCh      chan ApplyMsg
 	leaseStartAt time.Time
 	leaseSyncing bool
 }
@@ -184,13 +184,6 @@ func (rf *Raft) GetState() (int, bool) {
 	term = rf.term
 	isleader = rf.state == Leader && !rf.leaseSyncing && time.Since(rf.leaseStartAt) < LeaseDuration
 	return term, isleader
-}
-
-// Deprecated
-func (rf *Raft) GetLease() time.Time {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.leaseStartAt
 }
 
 //
@@ -678,7 +671,7 @@ func (rf *Raft) BroadcastHeartbeat() {
 	// }
 	rf.mu.Unlock()
 
-	lease := &Lease{1, false}
+	lease := rf.lease()
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
@@ -758,7 +751,14 @@ func (rf *Raft) needApplyL() bool {
 
 type Lease struct {
 	leaseVote    int
-	leaseUpdated bool
+	leaseStartAt time.Time
+}
+
+func (rf *Raft) lease() *Lease {
+	return &Lease{
+		leaseVote:    1,
+		leaseStartAt: time.Now(),
+	}
 }
 
 func (rf *Raft) DoReplicate(peer int) {
@@ -774,7 +774,7 @@ func (rf *Raft) DoReplicate(peer int) {
 			}
 		}
 
-		rf.Replicate(peer, &Lease{1, false})
+		rf.Replicate(peer, rf.lease())
 	}
 }
 
@@ -879,10 +879,8 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs, lease *Lease) {
 		if reply.Success {
 			lease.leaseVote++
 			if rf.IsMajority(lease.leaseVote) {
-				now := time.Now()
-				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), now)
-				rf.leaseStartAt = now
-				lease.leaseUpdated = true
+				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), lease.leaseStartAt)
+				rf.leaseStartAt = lease.leaseStartAt
 			}
 			if len(args.Entries) == 0 {
 				return

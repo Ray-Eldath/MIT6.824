@@ -214,10 +214,6 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 		reply.WrongLeader = true
 		return
 	}
-	if time.Since(sc.rf.GetLease()) >= raft.LeaseDuration {
-		reply.Err = ErrTimeout
-		return
-	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if num < 0 || num > sc.ConfigsTailL().Num {
@@ -235,9 +231,6 @@ const TimeoutInterval = 500 * time.Millisecond
 func (sc *ShardCtrler) Command(ty string, args interface{}) (i int, wrongLeader bool, err Err) {
 	if _, isLeader := sc.rf.GetState(); !isLeader {
 		return -1, true, OK
-	}
-	if time.Since(sc.rf.GetLease()) >= raft.LeaseDuration {
-		return -1, false, ErrTimeout
 	}
 	i, _, isLeader := sc.rf.Start(args)
 	sc.Debug("raft start %s i=%d %+v", ty, i, args)
