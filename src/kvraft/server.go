@@ -32,6 +32,7 @@ type KVServer struct {
 	dedup       map[int32]interface{}
 	getDone     map[int]chan string
 	done        map[int]chan struct{}
+	doneMu      sync.Mutex
 	lastApplied int
 }
 
@@ -62,15 +63,18 @@ func (kv *KVServer) DoApply() {
 			if _, isLeader := kv.rf.GetState(); !isLeader {
 				continue
 			}
-			kv.mu.Lock()
-			switch v.Command.(type) {
-			case PutAppendArgs:
+			if _, ok := v.Command.(PutAppendArgs); ok {
+				kv.doneMu.Lock()
 				ch := kv.done[v.CommandIndex]
-				kv.mu.Unlock()
-				go func(v raft.ApplyMsg) {
-					fmt.Printf("\n%d ch=%+v\n\n", v.CommandIndex, ch)
+				kv.doneMu.Unlock()
+				// there are several situation when ch could be nil:
+				//  1. PutAppend call Start, but raft apply the entry too fast, even before done channel is created.
+				//  2. if PutAppend called Start, and before it was pumped out of applyCh the server was rebooted,
+				//     done map will be re-initialized, but all old entries will still get out after reboot.
+				// in these two cases, we can safely ignore these cases since retry and dedup will fix this.
+				if ch != nil {
 					ch <- struct{}{}
-				}(v)
+				}
 			}
 		} else if v.SnapshotValid {
 			b := kv.rf.CondInstallSnapshot(v.SnapshotTerm, v.SnapshotIndex, v.SnapshotSeq, v.Snapshot)
@@ -155,9 +159,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	ch := make(chan struct{}, 1)
-	kv.mu.Lock()
+	kv.doneMu.Lock()
 	kv.done[i] = ch
-	kv.mu.Unlock()
+	kv.doneMu.Unlock()
 	select {
 	case <-ch:
 		kv.Debug("raft Put done: %+v", op)
