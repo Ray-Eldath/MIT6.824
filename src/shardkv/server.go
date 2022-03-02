@@ -104,7 +104,7 @@ func (kv *ShardKV) DoApply() {
 					kv.rf.Snapshot(v.CommandIndex, w.Bytes())
 				}
 				val, applied := kv.apply(v)
-				if !applied {
+				if !kv.isLeader() || !applied {
 					continue
 				}
 				kv.mu.Lock()
@@ -140,7 +140,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
 			return "", false
 		}
-		kv.LeaderDebug("%d applied Get {%d %v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("%d applied Get {%d %v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case PutAppendArgs:
 		key = args.Key
@@ -160,7 +160,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.kv[key] += args.Value
 		}
 		kv.dedup[args.ClientId] = v.Command
-		kv.LeaderDebug("%d applied PutAppend {%d %+v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("%d applied PutAppend {%d %+v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
 		kv.Debug("%d applying Handoff from gid %d: %+v config: %+v", kv.gid, args.Origin, args, kv.config)
