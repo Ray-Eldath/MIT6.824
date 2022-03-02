@@ -261,16 +261,16 @@ func (kv *ShardKV) Command(ty string, key string, args interface{}) (val string,
 
 // startAndWait args needs to be raw type (not pointer)
 func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err) {
-	i, _, isLeader := kv.rf.Start(cmd)
 	kv.mu.Lock()
 	conf := kv.config
 	kv.mu.Unlock()
+	kv.doneMu.Lock()
+	i, _, isLeader := kv.rf.Start(cmd)
 	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, conf)
 	if !isLeader {
 		return "", ErrWrongLeader
 	}
 	ch := make(chan string, 1)
-	kv.doneMu.Lock()
 	kv.done[i] = ch
 	kv.doneMu.Unlock()
 	select {
