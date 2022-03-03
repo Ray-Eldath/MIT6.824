@@ -63,7 +63,7 @@ func (kv *ShardKV) DoApply() {
 			if latest, ok := v.Command.(shardctrler.Config); ok {
 				kv.mu.Lock()
 				current := kv.config
-				kv.Debug("%d DoUpdateConfig i=%d current=%+v latest=%+v", kv.gid, v.CommandIndex, current.Shards, latest.Shards)
+				kv.Debug("%d DoUpdateConfig i=%d current=%+v latest=%+v", kv.gid, v.CommandIndex, current, latest)
 				handoff := make(map[int][]int) // gid -> shards
 				kv.config.Groups = latest.Groups
 				kv.config.Num = latest.Num
@@ -74,12 +74,13 @@ func (kv *ShardKV) DoApply() {
 					}
 					if gid == kv.gid && target != kv.gid { // move from self to others
 						handoff[target] = append(handoff[target], shard)
+						kv.config.Num = current.Num
 					} else if gid != 0 && gid != kv.gid && target == kv.gid { // move from others to self
 						kv.config.Shards[shard] = -1
 						kv.config.Num = current.Num
 					}
 				}
-				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config.Shards)
+				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config)
 
 				if kv.isLeader() {
 					for gid, shards := range handoff {
@@ -212,6 +213,7 @@ func (kv *ShardKV) handoff(args HandoffArgs, target int, servers []string) {
 				for k := range args.Kv {
 					delete(kv.kv, k)
 				}
+				kv.config.Num = args.Num
 				kv.mu.Unlock()
 				return
 			}
