@@ -185,7 +185,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.config.Shards[shard] = kv.gid
 		}
 		kv.config.Num = args.Num
-		kv.Debug("%d applied Handoff from gid %d: %+v shards: %v", kv.gid, args.Origin, args, kv.config.Shards)
+		kv.Debug("%d applied Handoff from gid %d  args.Shards: %v => shards: %v", kv.gid, args.Origin, args.Shards, kv.config.Shards)
 	}
 	kv.lastApplied = v.CommandIndex
 	if key != "" {

@@ -102,6 +102,7 @@ func TestJoinLeave(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("join0")
 	cfg.join(0)
 
 	n := 10
@@ -116,6 +117,7 @@ func TestJoinLeave(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
+	fmt.Println("join1")
 	cfg.join(1)
 
 	for i := 0; i < n; i++ {
@@ -125,6 +127,7 @@ func TestJoinLeave(t *testing.T) {
 		va[i] += x
 	}
 
+	fmt.Println("leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
