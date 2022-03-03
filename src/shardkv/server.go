@@ -97,7 +97,7 @@ func (kv *ShardKV) DoApply() {
 						}
 						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
-							go kv.handoff(HandoffArgs{kv.args(), kv.gid, shards, slice, kv.dedup[kv.gid]}, gid, servers)
+							go kv.handoff(HandoffArgs{kv.args(), latest.Num, kv.gid, shards, slice, kv.dedup[kv.gid]}, gid, servers)
 						} else {
 							panic("no group to handoff")
 						}
@@ -178,6 +178,10 @@ switchArgs:
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
+		if args.Num < kv.config.Num {
+			kv.Debug("%d reject Handoff due to args.Num < kv.config.Num. current=%+v args=%+v", kv.gid, kv.config, args)
+			return "", false
+		}
 		for _, dups := range kv.dedup {
 			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
 				kv.Debug("%d HandoffArgs duplicate found for %d  args=%+v", kv.gid, dup, args)
@@ -237,15 +241,13 @@ func (kv *ShardKV) DoUpdateConfig() {
 		if !kv.isLeader() {
 			continue
 		}
-		kv.mu.Lock()
-		num := kv.config.Num + 1
-		kv.mu.Unlock()
-		kv.rf.Start(kv.mck.Query(num))
+		kv.rf.Start(kv.mck.Query(-1))
 	}
 }
 
 type HandoffArgs struct {
 	Args
+	Num    int
 	Origin int
 	Shards []int
 	Kv     map[string]string
