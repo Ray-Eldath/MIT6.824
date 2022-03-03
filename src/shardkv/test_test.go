@@ -158,6 +158,7 @@ func TestSnapshot(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("join0")
 	cfg.join(0)
 
 	n := 30
@@ -172,8 +173,11 @@ func TestSnapshot(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
+	fmt.Println("join1")
 	cfg.join(1)
+	fmt.Println("join2")
 	cfg.join(2)
+	fmt.Println("leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
@@ -183,7 +187,9 @@ func TestSnapshot(t *testing.T) {
 		va[i] += x
 	}
 
+	fmt.Println("leave1")
 	cfg.leave(1)
+	fmt.Println("join0")
 	cfg.join(0)
 
 	for i := 0; i < n; i++ {

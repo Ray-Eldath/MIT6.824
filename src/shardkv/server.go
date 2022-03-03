@@ -63,6 +63,11 @@ func (kv *ShardKV) DoApply() {
 			if latest, ok := v.Command.(shardctrler.Config); ok {
 				kv.mu.Lock()
 				current := kv.config
+				if latest.Num <= current.Num {
+					kv.Debug("%d reject DoUpdateConfig due to latest.Num <= current.Num  i=%d current=%+v latest=%+v", kv.gid, v.CommandIndex, current, latest)
+					kv.mu.Unlock()
+					continue
+				}
 				kv.Debug("%d DoUpdateConfig i=%d current=%+v latest=%+v", kv.gid, v.CommandIndex, current, latest)
 				handoff := make(map[int][]int) // gid -> shards
 				kv.config.Groups = latest.Groups
@@ -175,7 +180,7 @@ switchArgs:
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
-		if args.Num != kv.config.Num+1 {
+		if args.Num < kv.config.Num || args.Num > kv.config.Num+1 {
 			kv.Debug("reject Handoff due to args.Num != kv.config.Num+1. current=%+v args=%+v", kv.config, args)
 			return "", false
 		}
