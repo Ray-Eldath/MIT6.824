@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -24,13 +25,19 @@ type ShardKV struct {
 	gid          int
 	ctrlers      []*labrpc.ClientEnd
 	maxraftstate int // snapshot if log grows this big
+	cid          int32
 	serversLen   int
 
-	kv          map[string]string
-	dedup       map[int32]int64
-	done        map[int]chan string
-	doneMu      sync.Mutex
-	lastApplied int
+	kv           map[string]string
+	dedup        map[int32]int64
+	handoffDedup map[int32]int64
+	done         map[int]chan string
+	doneMu       sync.Mutex
+	lastApplied  int
+}
+
+func (ck *ShardKV) args() Args {
+	return Args{ClientId: ck.cid, RequestId: nrand()}
 }
 
 func (kv *ShardKV) isLeader() bool {
@@ -86,7 +93,7 @@ func (kv *ShardKV) DoApply() {
 						}
 						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
-							go kv.handoff(HandoffArgs{kv.gid, shards, slice, kv.dedup}, gid, servers)
+							go kv.handoff(HandoffArgs{kv.args(), kv.gid, shards, slice, kv.dedup}, gid, servers)
 						} else {
 							panic("no group to handoff")
 						}
@@ -148,11 +155,11 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 	case PutAppendArgs:
 		key = args.Key
 		if !kv.checkInGroupL(key) {
-			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
+			kv.Debug("%d reject ApplyMsg due to not in group  v=%+v", kv.gid, v)
 			return "", false
 		}
 		if dup, ok := kv.dedup[args.ClientId]; ok && dup == args.RequestId {
-			kv.Debug("duplicate found for %d  args=%+v", dup, args)
+			kv.Debug("%d PutAppend duplicate found for %d  args=%+v", kv.gid, dup, args)
 			break
 		}
 		if args.Type == PutOp {
@@ -164,7 +171,10 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
-		kv.Debug("%d applying Handoff from gid %d: %+v config: %+v", kv.gid, args.Origin, args, kv.config)
+		if dup, ok := kv.handoffDedup[args.ClientId]; ok && dup == args.RequestId {
+			kv.Debug("%d Handoff duplicate found for %d  args=%+v", kv.gid, dup, args)
+			break
+		}
 		for k, v := range args.Kv {
 			kv.kv[k] = v
 		}
@@ -174,6 +184,8 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		for _, shard := range args.Shards {
 			kv.config.Shards[shard] = kv.gid
 		}
+		kv.handoffDedup[args.ClientId] = args.RequestId
+		kv.Debug("%d applied Handoff from gid %d: %+v shards: %v", kv.gid, args.Origin, args, kv.config.Shards)
 	}
 	kv.lastApplied = v.CommandIndex
 	if key != "" {
@@ -221,6 +233,7 @@ func (kv *ShardKV) DoUpdateConfig() {
 }
 
 type HandoffArgs struct {
+	Args
 	Origin int
 	Shards []int
 	Kv     map[string]string
@@ -352,13 +365,15 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.make_end = make_end
 	kv.gid = gid
 	kv.ctrlers = ctrlers
-
 	kv.serversLen = len(servers)
+	kv.cid = rand.Int31()
+
 	kv.mck = shardctrler.MakeClerk(ctrlers)
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.kv = make(map[string]string)
 	kv.dedup = make(map[int32]int64)
+	kv.handoffDedup = make(map[int32]int64)
 	kv.done = make(map[int]chan string)
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("%d StartServer dedup=%v  kv=%v", gid, kv.dedup, kv.kv)
