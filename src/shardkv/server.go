@@ -171,9 +171,9 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
-		if args.Num <= kv.config.Num {
-			kv.Debug("reject Handoff due to smaller or equal Num. current=%+v args=%+v", kv.config, args)
-			break
+		if args.Num != kv.config.Num+1 {
+			kv.Debug("reject Handoff due to args.Num != kv.config.Num+1. current=%+v args=%+v", kv.config, args)
+			return "", false
 		}
 		for k, v := range args.Kv {
 			kv.kv[k] = v
