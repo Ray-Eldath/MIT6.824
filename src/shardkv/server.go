@@ -74,13 +74,16 @@ func (kv *ShardKV) DoApply() {
 				kv.config.Num = latest.Num
 				for shard, gid := range current.Shards {
 					target := latest.Shards[shard]
-					if gid != -1 {
-						kv.config.Shards[shard] = target
+					if gid == -2 {
+						handoff[target] = append(handoff[target], shard)
 					}
 					if gid == kv.gid && target != kv.gid { // move from self to others
 						handoff[target] = append(handoff[target], shard)
+						kv.config.Shards[shard] = -2
 					} else if gid != 0 && gid != kv.gid && target == kv.gid { // move from others to self
 						kv.config.Shards[shard] = -1
+					} else if gid != -1 && gid != -2 {
+						kv.config.Shards[shard] = target
 					}
 				}
 				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config)
@@ -179,7 +182,7 @@ switchArgs:
 		break
 	case HandoffArgs:
 		if args.Num < kv.config.Num {
-			kv.Debug("%d reject Handoff due to args.Num < kv.config.Num. current=%+v args=%+v", kv.gid, kv.config, args)
+			kv.LeaderDebug("%d reject Handoff due to args.Num < kv.config.Num. current=%+v args=%+v", kv.gid, kv.config, args)
 			return "", false
 		}
 		for _, dups := range kv.dedup {
@@ -216,12 +219,21 @@ func (kv *ShardKV) handoff(args HandoffArgs, target int, servers []string) {
 		for _, si := range servers {
 			var reply HandoffReply
 			ok := kv.sendHandoff(si, &args, &reply)
+			kv.mu.Lock()
+			if args.Num != kv.config.Num {
+				kv.mu.Unlock()
+				return
+			}
+			kv.mu.Unlock()
 			if ok && reply.Err == OK {
 				kv.mu.Lock()
-				kv.LeaderDebug("%d handoff %v to %d done", kv.gid, args.Shards, target)
+				for _, shard := range args.Shards {
+					kv.config.Shards[shard] = target
+				}
 				for k := range args.Kv {
 					delete(kv.kv, k)
 				}
+				kv.LeaderDebug("%d handoff %v to %d done", kv.gid, args.Shards, target)
 				kv.mu.Unlock()
 				return
 			}
@@ -241,7 +253,10 @@ func (kv *ShardKV) DoUpdateConfig() {
 		if !kv.isLeader() {
 			continue
 		}
-		kv.rf.Start(kv.mck.Query(-1))
+		kv.mu.Lock()
+		num := kv.config.Num + 1
+		kv.mu.Unlock()
+		kv.rf.Start(kv.mck.Query(num))
 	}
 }
 
