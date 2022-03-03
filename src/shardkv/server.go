@@ -74,16 +74,15 @@ func (kv *ShardKV) DoApply() {
 				kv.config.Num = latest.Num
 				for shard, gid := range current.Shards {
 					target := latest.Shards[shard]
-					if gid == -2 {
-						handoff[target] = append(handoff[target], shard)
+					if gid != -1 {
+						kv.config.Shards[shard] = target
 					}
 					if gid == kv.gid && target != kv.gid { // move from self to others
 						handoff[target] = append(handoff[target], shard)
-						kv.config.Shards[shard] = -2
+						kv.config.Num = current.Num
 					} else if gid != 0 && gid != kv.gid && target == kv.gid { // move from others to self
 						kv.config.Shards[shard] = -1
-					} else if gid != -1 && gid != -2 {
-						kv.config.Shards[shard] = target
+						kv.config.Num = current.Num
 					}
 				}
 				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config)
@@ -219,21 +218,12 @@ func (kv *ShardKV) handoff(args HandoffArgs, target int, servers []string) {
 		for _, si := range servers {
 			var reply HandoffReply
 			ok := kv.sendHandoff(si, &args, &reply)
-			kv.mu.Lock()
-			if args.Num != kv.config.Num {
-				kv.mu.Unlock()
-				return
-			}
-			kv.mu.Unlock()
 			if ok && reply.Err == OK {
 				kv.mu.Lock()
-				for _, shard := range args.Shards {
-					kv.config.Shards[shard] = target
-				}
+				kv.LeaderDebug("%d handoff %v to %d done", kv.gid, args.Shards, target)
 				for k := range args.Kv {
 					delete(kv.kv, k)
 				}
-				kv.LeaderDebug("%d handoff %v to %d done", kv.gid, args.Shards, target)
 				kv.mu.Unlock()
 				return
 			}
