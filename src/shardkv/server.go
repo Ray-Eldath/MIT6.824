@@ -28,12 +28,11 @@ type ShardKV struct {
 	cid          int32
 	serversLen   int
 
-	kv           map[string]string
-	dedup        map[int32]int64
-	handoffDedup map[int32]int64
-	done         map[int]chan string
-	doneMu       sync.Mutex
-	lastApplied  int
+	kv          map[string]string
+	dedup       map[int32]int64
+	done        map[int]chan string
+	doneMu      sync.Mutex
+	lastApplied int
 }
 
 func (ck *ShardKV) args() Args {
@@ -77,6 +76,7 @@ func (kv *ShardKV) DoApply() {
 						handoff[target] = append(handoff[target], shard)
 					} else if gid != 0 && gid != kv.gid && target == kv.gid { // move from others to self
 						kv.config.Shards[shard] = -1
+						kv.config.Num = current.Num
 					}
 				}
 				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config.Shards)
@@ -93,7 +93,7 @@ func (kv *ShardKV) DoApply() {
 						}
 						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
-							go kv.handoff(HandoffArgs{kv.args(), kv.gid, shards, slice, kv.dedup}, gid, servers)
+							go kv.handoff(HandoffArgs{latest.Num, kv.gid, shards, slice, kv.dedup}, gid, servers)
 						} else {
 							panic("no group to handoff")
 						}
@@ -171,8 +171,8 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
-		if dup, ok := kv.handoffDedup[args.ClientId]; ok && dup == args.RequestId {
-			kv.Debug("%d Handoff duplicate found for %d  args=%+v", kv.gid, dup, args)
+		if args.Num <= kv.config.Num {
+			kv.Debug("reject Handoff due to smaller or equal Num. current=%+v args=%+v", kv.config, args)
 			break
 		}
 		for k, v := range args.Kv {
@@ -184,7 +184,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		for _, shard := range args.Shards {
 			kv.config.Shards[shard] = kv.gid
 		}
-		kv.handoffDedup[args.ClientId] = args.RequestId
+		kv.config.Num = args.Num
 		kv.Debug("%d applied Handoff from gid %d: %+v shards: %v", kv.gid, args.Origin, args, kv.config.Shards)
 	}
 	kv.lastApplied = v.CommandIndex
@@ -233,7 +233,7 @@ func (kv *ShardKV) DoUpdateConfig() {
 }
 
 type HandoffArgs struct {
-	Args
+	Num    int
 	Origin int
 	Shards []int
 	Kv     map[string]string
@@ -373,7 +373,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.kv = make(map[string]string)
 	kv.dedup = make(map[int32]int64)
-	kv.handoffDedup = make(map[int32]int64)
 	kv.done = make(map[int]chan string)
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("%d StartServer dedup=%v  kv=%v", gid, kv.dedup, kv.kv)
