@@ -29,7 +29,7 @@ type ShardKV struct {
 	serversLen   int
 
 	kv          map[string]string
-	dedup       map[int32]int64
+	dedup       map[int]map[int32]int64
 	done        map[int]chan string
 	doneMu      sync.Mutex
 	lastApplied int
@@ -45,7 +45,7 @@ func (kv *ShardKV) isLeader() bool {
 }
 
 func (kv *ShardKV) readSnapshot(snapshot []byte) {
-	var dedup map[int32]int64
+	var dedup map[int]map[int32]int64
 	var kvmap map[string]string
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
@@ -93,7 +93,7 @@ func (kv *ShardKV) DoApply() {
 						}
 						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
-							go kv.handoff(HandoffArgs{latest.Num, kv.gid, shards, slice, kv.dedup}, gid, servers)
+							go kv.handoff(HandoffArgs{latest.Num, kv.gid, shards, slice, kv.dedup[kv.gid]}, gid, servers)
 						} else {
 							panic("no group to handoff")
 						}
@@ -158,16 +158,18 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.Debug("%d reject ApplyMsg due to not in group  v=%+v", kv.gid, v)
 			return "", false
 		}
-		if dup, ok := kv.dedup[args.ClientId]; ok && dup == args.RequestId {
-			kv.Debug("%d PutAppend duplicate found for %d  args=%+v", kv.gid, dup, args)
-			break
+		for _, dups := range kv.dedup {
+			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
+				kv.Debug("%d PutAppend duplicate found for %d  args=%+v", kv.gid, dup, args)
+				break
+			}
 		}
 		if args.Type == PutOp {
 			kv.kv[key] = args.Value
 		} else {
 			kv.kv[key] += args.Value
 		}
-		kv.dedup[args.ClientId] = args.RequestId
+		kv.dedup[kv.gid][args.ClientId] = args.RequestId
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
@@ -178,8 +180,11 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 		for k, v := range args.Kv {
 			kv.kv[k] = v
 		}
+		if kv.dedup[args.Origin] == nil {
+			kv.dedup[args.Origin] = make(map[int32]int64)
+		}
 		for k, v := range args.Dedup {
-			kv.dedup[k] = v
+			kv.dedup[args.Origin][k] = v
 		}
 		for _, shard := range args.Shards {
 			kv.config.Shards[shard] = kv.gid
@@ -372,7 +377,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.kv = make(map[string]string)
-	kv.dedup = make(map[int32]int64)
+	kv.dedup = make(map[int]map[int32]int64)
+	kv.dedup[gid] = make(map[int32]int64)
 	kv.done = make(map[int]chan string)
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("%d StartServer dedup=%v  kv=%v", gid, kv.dedup, kv.kv)
