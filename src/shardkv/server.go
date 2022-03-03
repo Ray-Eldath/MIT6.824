@@ -79,10 +79,8 @@ func (kv *ShardKV) DoApply() {
 					}
 					if gid == kv.gid && target != kv.gid { // move from self to others
 						handoff[target] = append(handoff[target], shard)
-						kv.config.Num = current.Num
 					} else if gid != 0 && gid != kv.gid && target == kv.gid { // move from others to self
 						kv.config.Shards[shard] = -1
-						kv.config.Num = current.Num
 					}
 				}
 				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config)
@@ -99,7 +97,7 @@ func (kv *ShardKV) DoApply() {
 						}
 						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
-							go kv.handoff(HandoffArgs{latest.Num, kv.gid, shards, slice, kv.dedup[kv.gid]}, gid, servers)
+							go kv.handoff(HandoffArgs{kv.args(), kv.gid, shards, slice, kv.dedup[kv.gid]}, gid, servers)
 						} else {
 							panic("no group to handoff")
 						}
@@ -180,9 +178,11 @@ switchArgs:
 		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
-		if args.Num < kv.config.Num || args.Num > kv.config.Num+1 {
-			kv.Debug("reject Handoff due to args.Num != kv.config.Num+1. current=%+v args=%+v", kv.config, args)
-			return "", false
+		for _, dups := range kv.dedup {
+			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
+				kv.Debug("%d HandoffArgs duplicate found for %d  args=%+v", kv.gid, dup, args)
+				break switchArgs
+			}
 		}
 		for k, v := range args.Kv {
 			kv.kv[k] = v
@@ -196,7 +196,7 @@ switchArgs:
 		for _, shard := range args.Shards {
 			kv.config.Shards[shard] = kv.gid
 		}
-		kv.config.Num = args.Num
+		kv.dedup[kv.gid][args.ClientId] = args.RequestId
 		kv.Debug("%d applied Handoff from gid %d  args.Shards: %v => shards: %v", kv.gid, args.Origin, args.Shards, kv.config.Shards)
 	}
 	kv.lastApplied = v.CommandIndex
@@ -218,7 +218,6 @@ func (kv *ShardKV) handoff(args HandoffArgs, target int, servers []string) {
 				for k := range args.Kv {
 					delete(kv.kv, k)
 				}
-				kv.config.Num = args.Num
 				kv.mu.Unlock()
 				return
 			}
@@ -246,7 +245,7 @@ func (kv *ShardKV) DoUpdateConfig() {
 }
 
 type HandoffArgs struct {
-	Num    int
+	Args
 	Origin int
 	Shards []int
 	Kv     map[string]string
@@ -379,6 +378,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.gid = gid
 	kv.ctrlers = ctrlers
 	kv.serversLen = len(servers)
+	rand.Seed(time.Now().UnixNano())
 	kv.cid = rand.Int31()
 
 	kv.mck = shardctrler.MakeClerk(ctrlers)
