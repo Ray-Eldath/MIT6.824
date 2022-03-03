@@ -67,11 +67,11 @@ func (kv *KVServer) DoApply() {
 				kv.doneMu.Lock()
 				ch := kv.done[v.CommandIndex]
 				kv.doneMu.Unlock()
-				// there are several situation when ch could be nil:
-				//  1. PutAppend call Start, but raft apply the entry too fast, even before done channel is created.
+				// there are several situation where ch could be nil:
+				//  1. PutAppend call Start, but raft apply the entry too fast, even before done channel is ever created.
 				//  2. if PutAppend called Start, and before it was pumped out of applyCh the server was rebooted,
 				//     done map will be re-initialized, but all old entries will still get out after reboot.
-				// in these two cases, we can safely ignore these cases since retry and dedup will fix this.
+				// in these two cases, we can safely ignore ch since retry and dedup will fix this.
 				if ch != nil {
 					ch <- struct{}{}
 				}

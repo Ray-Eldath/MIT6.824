@@ -27,7 +27,7 @@ type ShardKV struct {
 	serversLen   int
 
 	kv          map[string]string
-	dedup       map[int32]interface{}
+	dedup       map[int32]int64
 	done        map[int]chan string
 	doneMu      sync.Mutex
 	lastApplied int
@@ -39,7 +39,7 @@ func (kv *ShardKV) isLeader() bool {
 }
 
 func (kv *ShardKV) readSnapshot(snapshot []byte) {
-	var dedup map[int32]interface{}
+	var dedup map[int32]int64
 	var kvmap map[string]string
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
@@ -57,18 +57,22 @@ func (kv *ShardKV) DoApply() {
 			if latest, ok := v.Command.(shardctrler.Config); ok {
 				kv.mu.Lock()
 				current := kv.config
-				kv.Debug("%d DoUpdateConfig current=%+v latest=%+v", kv.gid, current, latest)
+				kv.Debug("%d DoUpdateConfig i=%d current=%+v latest=%+v", kv.gid, v.CommandIndex, current.Shards, latest.Shards)
 				handoff := make(map[int][]int) // gid -> shards
 				kv.config.Groups = latest.Groups
+				kv.config.Num = latest.Num
 				for shard, gid := range current.Shards {
 					target := latest.Shards[shard]
+					if gid != -1 {
+						kv.config.Shards[shard] = target
+					}
 					if gid == kv.gid && target != kv.gid { // move from self to others
 						handoff[target] = append(handoff[target], shard)
-						kv.config.Shards[shard] = target
-					} else if gid == 0 && latest.Shards[shard] == kv.gid { // move from 0 to self
-						kv.config.Shards[shard] = kv.gid
+					} else if gid != 0 && gid != kv.gid && target == kv.gid { // move from others to self
+						kv.config.Shards[shard] = -1
 					}
 				}
+				kv.Debug("%d DoUpdateConfig i=%d merged=%+v", kv.gid, v.CommandIndex, kv.config.Shards)
 
 				if kv.isLeader() {
 					for gid, shards := range handoff {
@@ -82,7 +86,7 @@ func (kv *ShardKV) DoApply() {
 						}
 						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
-							go kv.handoff(shards, slice, gid, servers)
+							go kv.handoff(HandoffArgs{kv.gid, shards, slice, kv.dedup}, gid, servers)
 						} else {
 							panic("no group to handoff")
 						}
@@ -94,10 +98,9 @@ func (kv *ShardKV) DoApply() {
 					kv.doneMu.Lock()
 					ch := kv.done[v.CommandIndex]
 					kv.doneMu.Unlock()
-					go func(v raft.ApplyMsg) {
-						fmt.Printf("\n%d %d ch=%+v\n\n", kv.gid, v.CommandIndex, ch)
+					if ch != nil {
 						ch <- val
-					}(v)
+					}
 				}
 				if kv.maxraftstate != -1 && kv.rf.GetStateSize() >= kv.maxraftstate {
 					kv.Debug("checkSnapshot: kv.rf.GetStateSize(%d) >= kv.maxraftstate(%d)", kv.rf.GetStateSize(), kv.maxraftstate)
@@ -140,7 +143,7 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
 			return "", false
 		}
-		kv.Debug("%d applied Get {%d %v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("%d applied Get {%d %v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case PutAppendArgs:
 		key = args.Key
@@ -148,24 +151,25 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
 			return "", false
 		}
-		if dup, ok := kv.dedup[args.ClientId]; ok {
-			if putDup, ok := dup.(PutAppendArgs); ok && putDup.RequestId == args.RequestId {
-				kv.Debug("duplicate found for putDup=%+v  args=%+v", putDup, args)
-				break
-			}
+		if dup, ok := kv.dedup[args.ClientId]; ok && dup == args.RequestId {
+			kv.Debug("duplicate found for %d  args=%+v", dup, args)
+			break
 		}
 		if args.Type == PutOp {
 			kv.kv[key] = args.Value
 		} else {
 			kv.kv[key] += args.Value
 		}
-		kv.dedup[args.ClientId] = v.Command
-		kv.Debug("%d applied PutAppend {%d %+v} value: %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.dedup[args.ClientId] = args.RequestId
+		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
 		kv.Debug("%d applying Handoff from gid %d: %+v config: %+v", kv.gid, args.Origin, args, kv.config)
 		for k, v := range args.Kv {
 			kv.kv[k] = v
+		}
+		for k, v := range args.Dedup {
+			kv.dedup[k] = v
 		}
 		for _, shard := range args.Shards {
 			kv.config.Shards[shard] = kv.gid
@@ -179,6 +183,28 @@ func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 	}
 }
 
+func (kv *ShardKV) handoff(args HandoffArgs, target int, servers []string) {
+	for {
+		for _, si := range servers {
+			var reply HandoffReply
+			ok := kv.sendHandoff(si, &args, &reply)
+			if ok && reply.Err == OK {
+				kv.mu.Lock()
+				kv.LeaderDebug("%d handoff %v to %d done", kv.gid, args.Shards, target)
+				for k := range args.Kv {
+					delete(kv.kv, k)
+				}
+				kv.mu.Unlock()
+				return
+			}
+			if ok && reply.Err == ErrWrongGroup {
+				panic("handoff reply.Err == ErrWrongGroup")
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 const UpdateConfigInterval = 100 * time.Millisecond
 
 func (kv *ShardKV) DoUpdateConfig() {
@@ -187,30 +213,10 @@ func (kv *ShardKV) DoUpdateConfig() {
 		if !kv.isLeader() {
 			continue
 		}
-		kv.rf.Start(kv.mck.Query(-1))
-	}
-}
-
-func (kv *ShardKV) handoff(shards []int, slice map[string]string, target int, servers []string) {
-	for {
-		for _, si := range servers {
-			var reply HandoffReply
-			args := HandoffArgs{kv.gid, shards, slice}
-			ok := kv.sendHandoff(si, &args, &reply)
-			if ok && reply.Err == OK {
-				kv.mu.Lock()
-				kv.LeaderDebug("%d handoff %v to %d done", kv.gid, shards, target)
-				for k := range args.Kv {
-					delete(kv.kv, k)
-				}
-				kv.mu.Unlock()
-				return
-			}
-			if ok && reply.Err == ErrWrongGroup {
-				break
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
+		kv.mu.Lock()
+		num := kv.config.Num + 1
+		kv.mu.Unlock()
+		kv.rf.Start(kv.mck.Query(num))
 	}
 }
 
@@ -218,6 +224,7 @@ type HandoffArgs struct {
 	Origin int
 	Shards []int
 	Kv     map[string]string
+	Dedup  map[int32]int64
 }
 
 type HandoffReply struct {
@@ -263,17 +270,15 @@ func (kv *ShardKV) Command(ty string, key string, args interface{}) (val string,
 
 // startAndWait args needs to be raw type (not pointer)
 func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err) {
-	kv.mu.Lock()
-	conf := kv.config
-	kv.mu.Unlock()
-
-	kv.doneMu.Lock()
 	i, _, isLeader := kv.rf.Start(cmd)
-	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, conf)
+	kv.mu.Lock()
+	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, kv.config)
+	kv.mu.Unlock()
 	if !isLeader {
 		return "", ErrWrongLeader
 	}
 	ch := make(chan string, 1)
+	kv.doneMu.Lock()
 	kv.done[i] = ch
 	kv.doneMu.Unlock()
 	select {
@@ -353,7 +358,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.kv = make(map[string]string)
-	kv.dedup = make(map[int32]interface{})
+	kv.dedup = make(map[int32]int64)
 	kv.done = make(map[int]chan string)
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("%d StartServer dedup=%v  kv=%v", gid, kv.dedup, kv.kv)
