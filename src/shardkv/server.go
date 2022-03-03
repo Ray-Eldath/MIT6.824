@@ -233,7 +233,10 @@ func (kv *ShardKV) DoUpdateConfig() {
 		if !kv.isLeader() {
 			continue
 		}
-		kv.rf.Start(kv.mck.Query(-1))
+		kv.mu.Lock()
+		num := kv.config.Num + 1
+		kv.mu.Unlock()
+		kv.rf.Start(kv.mck.Query(num))
 	}
 }
 
