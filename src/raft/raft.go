@@ -119,6 +119,8 @@ type Raft struct {
 
 	leaseStartAt time.Time
 	leaseSyncing bool
+
+	SdebugPrefix string
 }
 
 func (rf *Raft) IsMajority(vote int) bool {
@@ -746,7 +748,7 @@ func (rf *Raft) needApply() bool {
 }
 
 func (rf *Raft) needApplyL() bool {
-	return rf.commitIndex > rf.lastApplied
+	return rf.commitIndex > rf.lastApplied && (rf.state != Leader || time.Since(rf.leaseStartAt) < LeaseDuration)
 }
 
 type Lease struct {
@@ -879,8 +881,10 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs, lease *Lease) {
 		if reply.Success {
 			lease.leaseVote++
 			if rf.IsMajority(lease.leaseVote) {
-				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), lease.leaseStartAt)
-				rf.leaseStartAt = lease.leaseStartAt
+				if rf.leaseStartAt.Before(lease.leaseStartAt) {
+					rf.leaseStartAt = lease.leaseStartAt
+				}
+				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), Microseconds(rf.leaseStartAt))
 			}
 			if len(args.Entries) == 0 {
 				return

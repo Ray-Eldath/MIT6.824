@@ -102,7 +102,7 @@ func TestJoinLeave(t *testing.T) {
 
 	ck := cfg.makeClient()
 
-	fmt.Println("join0")
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -117,7 +117,7 @@ func TestJoinLeave(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
-	fmt.Println("join1")
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	for i := 0; i < n; i++ {
@@ -127,7 +127,7 @@ func TestJoinLeave(t *testing.T) {
 		va[i] += x
 	}
 
-	fmt.Println("leave0")
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
@@ -141,6 +141,7 @@ func TestJoinLeave(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	cfg.checklogs()
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
 
 	for i := 0; i < n; i++ {
@@ -158,7 +159,7 @@ func TestSnapshot(t *testing.T) {
 
 	ck := cfg.makeClient()
 
-	fmt.Println("join0")
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 30
@@ -173,11 +174,11 @@ func TestSnapshot(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
-	fmt.Println("join1")
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
-	fmt.Println("join2")
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
-	fmt.Println("leave0")
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
@@ -187,9 +188,9 @@ func TestSnapshot(t *testing.T) {
 		va[i] += x
 	}
 
-	fmt.Println("leave1")
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
-	fmt.Println("join0")
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	for i := 0; i < n; i++ {
