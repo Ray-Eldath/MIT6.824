@@ -60,6 +60,8 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	var dedup map[int]map[int32]int64
 	var kvmap map[string]string
 	var shardStates [shardctrler.NShards]ShardState
+	var lastConf shardctrler.Config
+	var conf shardctrler.Config
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
 	if e := d.Decode(&dedup); e == nil {
@@ -71,13 +73,19 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	if e := d.Decode(&shardStates); e == nil {
 		kv.shardStates = shardStates
 	}
+	if e := d.Decode(&lastConf); e == nil {
+		kv.lastConfig = lastConf
+	}
+	if e := d.Decode(&conf); e == nil {
+		kv.config = conf
+	}
 }
 
 func (kv *ShardKV) DoApply() {
 	for v := range kv.applyCh {
 		if v.CommandValid {
 			if latest, ok := v.Command.(shardctrler.Config); ok {
-				kv.applyConfig(latest)
+				kv.applyConfig(latest, v.CommandIndex)
 			} else {
 				val, err := kv.applyMsg(v)
 				if kv.isLeader() {
@@ -104,6 +112,12 @@ func (kv *ShardKV) DoApply() {
 				if err := e.Encode(kv.shardStates); err != nil {
 					panic(err)
 				}
+				if err := e.Encode(kv.lastConfig); err != nil {
+					panic(err)
+				}
+				if err := e.Encode(kv.config); err != nil {
+					panic(err)
+				}
 				kv.mu.Unlock()
 				kv.rf.Snapshot(v.CommandIndex, w.Bytes())
 			}
@@ -118,7 +132,12 @@ func (kv *ShardKV) DoApply() {
 	}
 }
 
-func (kv *ShardKV) applyConfig(latest shardctrler.Config) {
+func (kv *ShardKV) applyConfig(latest shardctrler.Config, commandIndex int) {
+	if commandIndex <= kv.lastApplied {
+		kv.Debug("reject Config due to <= Index. lastApplied=%d latest=%+v", kv.lastApplied, latest)
+		return
+	}
+	kv.lastApplied = commandIndex
 	kv.mu.Lock()
 	kv.lastConfig = kv.config
 	kv.config = latest
@@ -168,15 +187,15 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 		kv.Debug("reject ApplyMsg due to <= Index. lastApplied=%d v=%+v", kv.lastApplied, v)
 		return "", ErrTimeout
 	}
+	kv.lastApplied = v.CommandIndex
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	kv.lastApplied = v.CommandIndex
 	var key string
 	switch args := v.Command.(type) {
 	case GetArgs:
 		key = args.Key
 		if err := kv.checkKeyL(key); err != OK {
-			kv.Debug("reject ApplyMsg due to not failed checkKeyL=%s  v=%+v", err, v)
+			kv.Debug("reject ApplyMsg due to failed checkKeyL=%s  v=%+v", err, v)
 			return "", err
 		}
 		kv.Debug("applied Get {%d %v} => %s config: %+v", v.CommandIndex, v.Command, kv.kv[key], kv.config)
@@ -184,7 +203,7 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 	case PutAppendArgs:
 		key = args.Key
 		if err := kv.checkKeyL(key); err != OK {
-			kv.Debug("reject ApplyMsg due to not failed checkKeyL=%s  v=%+v", err, v)
+			kv.Debug("reject ApplyMsg due to failed checkKeyL=%s  v=%+v", err, v)
 			return "", err
 		}
 		for _, dups := range kv.dedup {
