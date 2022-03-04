@@ -204,7 +204,7 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.Debug("reject ApplyMsg due to failed checkKeyL=%s  v=%+v", err, v)
 			return "", err
 		}
-		kv.Debug("applied Get {%d %v} => %s config: %+v", v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("applied Get => %s  args: {%d %v} config: %+v", v.CommandIndex, kv.kv[key], args, kv.config)
 		return kv.kv[key], OK
 	case PutAppendArgs:
 		key = args.Key
@@ -224,7 +224,7 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.kv[key] += args.Value
 		}
 		kv.dedup[kv.gid][args.ClientId] = args.RequestId
-		kv.Debug("applied PutAppend {%d %+v} => %s config: %+v", v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("applied PutAppend => %s  args: {%d %+v} config: %+v", v.CommandIndex, kv.kv[key], args, kv.config)
 		return "", OK
 	case HandoffArgs:
 		for _, dups := range kv.dedup {
@@ -246,9 +246,12 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 		if kv.dedup[args.Origin] == nil {
 			kv.dedup[args.Origin] = make(map[int32]int64)
 		}
-		for _, dups := range args.Dedup {
+		for gid, dups := range args.Dedup {
 			for k, v := range dups {
-				kv.dedup[args.Origin][k] = v
+				if kv.dedup[gid] == nil {
+					kv.dedup[gid] = make(map[int32]int64)
+				}
+				kv.dedup[gid][k] = v
 			}
 		}
 		kv.dedup[kv.gid][args.ClientId] = args.RequestId
