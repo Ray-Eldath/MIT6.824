@@ -247,6 +247,9 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.dedup[args.Origin] = make(map[int32]int64)
 		}
 		for gid, dups := range args.Dedup {
+			if gid == kv.gid {
+				continue
+			}
 			for k, v := range dups {
 				if kv.dedup[gid] == nil {
 					kv.dedup[gid] = make(map[int32]int64)
