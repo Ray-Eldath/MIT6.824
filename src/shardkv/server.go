@@ -75,7 +75,7 @@ func (kv *ShardKV) DoApply() {
 				kv.lastConfig = kv.config
 				kv.config = latest
 
-				kv.Debug("%d applying Config  states=%v", kv.gid, kv.shardStates)
+				kv.Debug("applying Config  states=%v", kv.shardStates)
 				handoff := make(map[int][]int) // gid -> shards
 				for shard, gid := range kv.lastConfig.Shards {
 					target := kv.config.Shards[shard]
@@ -87,7 +87,7 @@ func (kv *ShardKV) DoApply() {
 						kv.shardStates[shard] = Pulling
 					}
 				}
-				kv.Debug("%d applied Config  lastConfig=%+v latest=%+v updatedStates=%v", kv.gid, kv.lastConfig, latest, kv.shardStates)
+				kv.Debug("applied Config  lastConfig=%+v latest=%+v updatedStates=%v", kv.lastConfig, latest, kv.shardStates)
 
 				dedup := make(map[int32]int64)
 				for k, v := range kv.dedup[kv.gid] {
@@ -105,7 +105,7 @@ func (kv *ShardKV) DoApply() {
 								}
 							}
 						}
-						kv.Debug("%d handoff shards %v to gid %d: %v", kv.gid, shards, gid, slice)
+						kv.Debug("handoff shards %v to gid %d: %v", shards, gid, slice)
 						if servers, ok := latest.Groups[gid]; ok {
 							go kv.handoff(HandoffArgs{kv.args(), latest.Num, kv.gid, shards, slice, dedup}, servers)
 						} else {
@@ -150,7 +150,7 @@ func (kv *ShardKV) DoApply() {
 
 func (kv *ShardKV) apply(v raft.ApplyMsg) (string, bool) {
 	if v.CommandIndex <= kv.lastApplied {
-		kv.Debug("reject ApplyMsg due to smaller Index. lastApplied=%d v=%+v", kv.lastApplied, v)
+		kv.Debug("reject ApplyMsg due to <= Index. lastApplied=%d v=%+v", kv.lastApplied, v)
 		return "", false
 	}
 	kv.mu.Lock()
@@ -164,17 +164,17 @@ switchArgs:
 			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
 			return "", false
 		}
-		kv.Debug("%d applied Get {%d %v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("applied Get {%d %v} => %s config: %+v", v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case PutAppendArgs:
 		key = args.Key
 		if !kv.checkInGroupL(key) {
-			kv.Debug("%d reject ApplyMsg due to not in group  v=%+v", kv.gid, v)
+			kv.Debug("reject ApplyMsg due to not in group  v=%+v", v)
 			return "", false
 		}
 		for _, dups := range kv.dedup {
 			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
-				kv.Debug("%d PutAppend duplicate found for %d  args=%+v", kv.gid, dup, args)
+				kv.Debug("PutAppend duplicate found for %d  args=%+v", dup, args)
 				break switchArgs
 			}
 		}
@@ -184,17 +184,17 @@ switchArgs:
 			kv.kv[key] += args.Value
 		}
 		kv.dedup[kv.gid][args.ClientId] = args.RequestId
-		kv.Debug("%d applied PutAppend {%d %+v} => %s config: %+v", kv.gid, v.CommandIndex, v.Command, kv.kv[key], kv.config)
+		kv.Debug("applied PutAppend {%d %+v} => %s config: %+v", v.CommandIndex, v.Command, kv.kv[key], kv.config)
 		break
 	case HandoffArgs:
 		for _, dups := range kv.dedup {
 			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
-				kv.Debug("%d HandoffArgs duplicate found for %d  args=%+v", kv.gid, dup, args)
+				kv.Debug("HandoffArgs duplicate found for %d  args=%+v", dup, args)
 				break switchArgs
 			}
 		}
 		if args.Num != kv.config.Num {
-			kv.LeaderDebug("%d reject Handoff due to args.Num != kv.config.Num. current=%+v args=%+v", kv.gid, kv.config, args)
+			kv.LeaderDebug("reject Handoff due to args.Num != kv.config.Num. current=%+v args=%+v", kv.config, args)
 			return "", false
 		}
 		for k, v := range args.Kv {
@@ -210,10 +210,10 @@ switchArgs:
 			kv.dedup[args.Origin][k] = v
 		}
 		kv.dedup[kv.gid][args.ClientId] = args.RequestId
-		kv.Debug("%d applied Handoff from gid %d  args.Shards: %v => shards: %v states: %v", kv.gid, args.Origin, args.Shards, kv.config.Shards, kv.shardStates)
+		kv.Debug("applied Handoff from gid %d  args.Shards: %v => shards: %v states: %v", args.Origin, args.Shards, kv.config.Shards, kv.shardStates)
 	case HandoffReply:
 		if args.Num != kv.config.Num {
-			kv.LeaderDebug("%d reject Handoff due to args.Num != kv.config.Num. current=%+v args=%+v", kv.gid, kv.config, args)
+			kv.LeaderDebug("reject Handoff due to args.Num != kv.config.Num. current=%+v args=%+v", kv.config, args)
 			return "", false
 		}
 		for _, k := range args.Keys {
@@ -222,7 +222,7 @@ switchArgs:
 		for _, shard := range args.Shards {
 			kv.shardStates[shard] = Serving
 		}
-		kv.Debug("%d handoff %v to %d done  states=%v", kv.gid, args.Shards, args.Receiver, kv.shardStates)
+		kv.Debug("handoff %v to %d done  states=%v", args.Shards, args.Receiver, kv.shardStates)
 	}
 	kv.lastApplied = v.CommandIndex
 	if key != "" {
@@ -242,7 +242,7 @@ updateConfig:
 			continue
 		}
 		kv.mu.Lock()
-		kv.Debug("%d DoUpdateConfig states=%v", kv.gid, kv.shardStates)
+		kv.Debug("DoUpdateConfig states=%v", kv.shardStates)
 		for _, state := range kv.shardStates {
 			if state != Serving {
 				kv.mu.Unlock()
@@ -337,7 +337,7 @@ const TimeoutInterval = 500 * time.Millisecond
 func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err) {
 	i, _, isLeader := kv.rf.Start(cmd)
 	kv.mu.Lock()
-	kv.Debug("%d raft start %s i=%d %+v  config: %+v", kv.gid, ty, i, cmd, kv.config)
+	kv.Debug("raft start %s i=%d %+v  config: %+v", ty, i, cmd, kv.config)
 	kv.mu.Unlock()
 	if !isLeader {
 		return "", ErrWrongLeader
@@ -348,7 +348,7 @@ func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err
 	kv.doneMu.Unlock()
 	select {
 	case v := <-ch:
-		kv.Debug("%d raft %s done: %+v => %v", kv.gid, ty, cmd, v)
+		kv.Debug("raft %s done: %+v => %v", ty, cmd, v)
 		return v, OK
 	case <-time.After(TimeoutInterval):
 		return "", ErrTimeout
@@ -448,7 +448,7 @@ const Padding = "    "
 func (kv *ShardKV) Debug(format string, a ...interface{}) {
 	preamble := strings.Repeat(Padding, kv.me)
 	epilogue := strings.Repeat(Padding, kv.serversLen-kv.me-1)
-	prefix := fmt.Sprintf("%s%s S%d %s[SHARDKV] ", preamble, raft.Microseconds(time.Now()), kv.me, epilogue)
+	prefix := fmt.Sprintf("%s%s S%d %s[SHARDKV] %d ", preamble, raft.Microseconds(time.Now()), kv.me, epilogue, kv.gid)
 	format = prefix + format
 	log.Print(fmt.Sprintf(format, a...))
 }
