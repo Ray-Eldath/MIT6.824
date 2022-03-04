@@ -204,7 +204,7 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.Debug("reject ApplyMsg due to failed checkKeyL=%s  v=%+v", err, v)
 			return "", err
 		}
-		kv.Debug("applied Get => %s  args: {%d %v} config: %+v", v.CommandIndex, kv.kv[key], args, kv.config)
+		kv.Debug("applied Get => %s  args: {%d %v} config: %+v", kv.kv[key], v.CommandIndex, args, kv.config)
 		return kv.kv[key], OK
 	case PutAppendArgs:
 		key = args.Key
@@ -224,7 +224,7 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.kv[key] += args.Value
 		}
 		kv.dedup[kv.gid][args.ClientId] = args.RequestId
-		kv.Debug("applied PutAppend => %s  args: {%d %+v} config: %+v", v.CommandIndex, kv.kv[key], args, kv.config)
+		kv.Debug("applied PutAppend => %s  args: {%d %+v} config: %+v", kv.kv[key], v.CommandIndex, args, kv.config)
 		return "", OK
 	case HandoffArgs:
 		for _, dups := range kv.dedup {
