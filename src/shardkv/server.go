@@ -241,8 +241,18 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			return "", OK
 		}
 		if args.Num != kv.config.Num {
-			kv.Debug("reject Handoff due to args.Num != kv.config.Num. current=%+v args=%+v", kv.config, args)
+			kv.Debug("reject Handoff due to args.Num %d != kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
 			return "", ErrTimeout
+		}
+		allServing := true
+		for _, shard := range args.Shards {
+			if kv.shardStates[shard] != Serving {
+				allServing = false
+			}
+		}
+		if allServing {
+			kv.Debug("reject Handoff due to allServing. current=%+v args=%+v", kv.config, args)
+			return "", OK
 		}
 		for k, v := range args.Kv {
 			kv.kv[k] = v
@@ -256,11 +266,11 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			}
 		}
 		kv.dedup[args.ClientId] = args.SequenceNum
-		kv.Debug("applied HandoffArgs from gid %d  args.Shards: %v => %v states: %v", args.Origin, args.Shards, kv.config, kv.shardStates)
+		kv.Debug("applied HandoffArgs from gid %d => %v states: %v  args: %v", args.Origin, kv.config, kv.shardStates, args)
 		return "", OK
 	case HandoffDoneArgs:
 		if args.Num != kv.config.Num {
-			kv.Debug("reject HandoffReply due to args.Num != kv.config.Num. current=%+v args=%+v", kv.config, args)
+			kv.Debug("reject HandoffReply due to args.Num %d != kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
 			return "", ErrTimeout
 		}
 		for _, k := range args.Keys {
@@ -528,7 +538,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.dedup = make(map[int32]int64)
 	kv.done = make(map[int]Done)
 	kv.readSnapshot(persister.ReadSnapshot())
-	kv.Debug("StartServer dedup=%v  kv=%v", kv.dedup, kv.kv)
+	kv.Debug("StartServer cid=%d dedup=%v  kv=%v", kv.cid, kv.dedup, kv.kv)
 	go kv.DoApply()
 	go kv.DoUpdateConfig()
 
