@@ -308,6 +308,7 @@ func (rf *Raft) Snapshot(seq int, snapshot []byte) {
 			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
 			rf.log[0].Command = nil
 			rf.lastApplied = entry.Index
+			rf.commitIndex = Max(rf.commitIndex, entry.Index)
 			if rf.leaseSyncing && rf.lastApplied >= rf.commitIndex {
 				rf.leaseSyncing = false
 			}
@@ -749,7 +750,7 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 func (rf *Raft) needApply() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.Debug(dTrace, "needApply: commitIndex=%d lastApplied=%d", rf.commitIndex, rf.lastApplied)
+	rf.Debug(dTrace, "needApply: commitIndex=%d lastApplied=%d leaseSyncing=%t", rf.commitIndex, rf.lastApplied, rf.leaseSyncing)
 	return rf.needApplyL()
 }
 
