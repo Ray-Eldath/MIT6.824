@@ -9,9 +9,7 @@ package shardkv
 //
 
 import "6.824/labrpc"
-import "crypto/rand"
 import rand2 "math/rand"
-import "math/big"
 import "6.824/shardctrler"
 import (
 	"time"
@@ -32,22 +30,16 @@ func key2shard(key string) int {
 	return shard
 }
 
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
-}
-
 type Clerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
 	cid      int32
+	num      int64
 }
 
 func (ck *Clerk) args() Args {
-	return Args{ClientId: ck.cid, RequestId: nrand()}
+	return Args{ClientId: ck.cid, SequenceNum: ck.num}
 }
 
 //
@@ -64,6 +56,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	ck.cid = rand2.Int31()
+	ck.num = 100
 	return ck
 }
 
@@ -74,7 +67,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // You will have to modify this function.
 //
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{Key: key}
+	args := GetArgs{Args: ck.args(), Key: key}
 
 	for {
 		shard := key2shard(key)
@@ -87,6 +80,7 @@ func (ck *Clerk) Get(key string) string {
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				log.Printf("Call Get %d %s shard=%d gid=%d ok=%t Err=%s\n", si, servers[si], shard, gid, ok, reply.Err)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					ck.num++
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
@@ -125,6 +119,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				log.Printf("Call PutAppend %d %s shard=%d gid=%d ok=%t Err=%s\n", si, servers[si], shard, gid, ok, reply.Err)
 				if ok && reply.Err == OK {
+					ck.num++
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {

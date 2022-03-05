@@ -20,8 +20,8 @@ const (
 type Err string
 
 type Args struct {
-	ClientId  int32
-	RequestId int64
+	ClientId    int32
+	SequenceNum int64
 }
 
 type PutOrAppend int
@@ -33,10 +33,10 @@ const (
 
 // Put or Append
 type PutAppendArgs struct {
+	Args
 	Type  PutOrAppend
 	Key   string
 	Value string
-	Args
 }
 
 type PutAppendReply struct {
@@ -44,6 +44,7 @@ type PutAppendReply struct {
 }
 
 type GetArgs struct {
+	Args
 	Key string
 }
 

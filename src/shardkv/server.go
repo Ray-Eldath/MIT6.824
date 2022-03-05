@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,7 +35,8 @@ type ShardKV struct {
 
 	shardStates [shardctrler.NShards]ShardState
 	kv          map[string]string
-	dedup       map[int]map[int32]int64
+	dedup       map[int32]int64
+	num         int64
 	done        map[int]Done
 	doneMu      sync.Mutex
 	lastApplied int
@@ -49,7 +51,7 @@ const (
 )
 
 func (kv *ShardKV) args() Args {
-	return Args{ClientId: kv.cid, RequestId: nrand()}
+	return Args{ClientId: kv.cid, SequenceNum: atomic.LoadInt64(&kv.num)}
 }
 
 func (kv *ShardKV) isLeader() bool {
@@ -58,7 +60,7 @@ func (kv *ShardKV) isLeader() bool {
 }
 
 func (kv *ShardKV) readSnapshot(snapshot []byte) {
-	var dedup map[int]map[int32]int64
+	var dedup map[int32]int64
 	var kvmap map[string]string
 	var shardStates [shardctrler.NShards]ShardState
 	var lastConf shardctrler.Config
@@ -171,14 +173,9 @@ func (kv *ShardKV) updateShardStates(latest shardctrler.Config) {
 	}
 	kv.Debug("applied Config  lastConfig=%+v latest=%+v updatedStates=%v", kv.lastConfig, latest, kv.shardStates)
 
-	dedup := make(map[int]map[int32]int64)
-	for gid, dups := range kv.dedup {
-		if dedup[gid] == nil {
-			dedup[gid] = make(map[int32]int64)
-		}
-		for k, v := range dups {
-			dedup[gid][k] = v
-		}
+	dedup := make(map[int32]int64)
+	for cid, dup := range kv.dedup {
+		dedup[cid] = dup
 	}
 	kv.mu.Unlock()
 
@@ -226,26 +223,22 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.Debug("reject ApplyMsg due to failed checkKeyL=%s  v=%+v", err, v)
 			return "", err
 		}
-		for _, dups := range kv.dedup {
-			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
-				kv.Debug("PutAppend duplicate found for %d  args=%+v", dup, args)
-				return "", OK
-			}
+		if dup, ok := kv.dedup[args.ClientId]; ok && args.SequenceNum <= dup {
+			kv.Debug("PutAppend duplicate found for %d  args=%+v", dup, args)
+			return "", OK
 		}
 		if args.Type == PutOp {
 			kv.kv[key] = args.Value
 		} else {
 			kv.kv[key] += args.Value
 		}
-		kv.dedup[kv.gid][args.ClientId] = args.RequestId
+		kv.dedup[args.ClientId] = args.SequenceNum
 		kv.Debug("applied PutAppend => %s  args: {%d %+v} config: %+v", kv.kv[key], v.CommandIndex, args, kv.config)
 		return "", OK
 	case HandoffArgs:
-		for _, dups := range kv.dedup {
-			if dup, ok := dups[args.ClientId]; ok && dup == args.RequestId {
-				kv.Debug("HandoffArgs duplicate found for %d  args=%+v", dup, args)
-				return "", OK
-			}
+		if dup, ok := kv.dedup[args.ClientId]; ok && args.SequenceNum <= dup {
+			kv.Debug("HandoffArgs duplicate found for %d  args=%+v", dup, args)
+			return "", OK
 		}
 		if args.Num != kv.config.Num {
 			kv.Debug("reject Handoff due to args.Num != kv.config.Num. current=%+v args=%+v", kv.config, args)
@@ -257,21 +250,12 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 		for _, shard := range args.Shards {
 			kv.shardStates[shard] = Serving
 		}
-		if kv.dedup[args.Origin] == nil {
-			kv.dedup[args.Origin] = make(map[int32]int64)
-		}
-		for gid, dups := range args.Dedup {
-			if gid == kv.gid {
-				continue
-			}
-			for k, v := range dups {
-				if kv.dedup[gid] == nil {
-					kv.dedup[gid] = make(map[int32]int64)
-				}
-				kv.dedup[gid][k] = v
+		for cid, dup := range args.Dedup {
+			if dup > kv.dedup[cid] {
+				kv.dedup[cid] = dup
 			}
 		}
-		kv.dedup[kv.gid][args.ClientId] = args.RequestId
+		kv.dedup[args.ClientId] = args.SequenceNum
 		kv.Debug("applied HandoffArgs from gid %d  args.Shards: %v => %v states: %v", args.Origin, args.Shards, kv.config, kv.shardStates)
 		return "", OK
 	case HandoffDoneArgs:
@@ -321,7 +305,7 @@ type HandoffArgs struct {
 	Origin int
 	Shards []int
 	Kv     map[string]string
-	Dedup  map[int]map[int32]int64
+	Dedup  map[int32]int64
 }
 
 type HandoffReply struct {
@@ -351,6 +335,7 @@ func (kv *ShardKV) pollHandoff(args HandoffArgs, target int, servers []string) {
 			ok := kv.sendHandoff(si, &args, &reply)
 			kv.Debug("handoff to target %d %s ok=%t reply.Err=%s  args=%v+\n", target, si, ok, reply.Err, args)
 			if ok && reply.Err == OK {
+				atomic.AddInt64(&kv.num, 1)
 				return
 			}
 			if ok && reply.Err == ErrWrongGroup {
@@ -531,6 +516,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.serversLen = len(servers)
 	rand.Seed(time.Now().UnixNano())
 	kv.cid = rand.Int31()
+	kv.num = 100
 
 	kv.mck = shardctrler.MakeClerk(ctrlers)
 	kv.applyCh = make(chan raft.ApplyMsg)
@@ -539,8 +525,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.rf.Initialize(servers, me, persister, kv.applyCh)
 	kv.groups = make(map[int][]string)
 	kv.kv = make(map[string]string)
-	kv.dedup = make(map[int]map[int32]int64)
-	kv.dedup[gid] = make(map[int32]int64)
+	kv.dedup = make(map[int32]int64)
 	kv.done = make(map[int]Done)
 	kv.readSnapshot(persister.ReadSnapshot())
 	kv.Debug("StartServer dedup=%v  kv=%v", kv.dedup, kv.kv)
