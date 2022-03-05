@@ -215,6 +215,7 @@ func TestSnapshot(t *testing.T) {
 	cfg.ShutdownGroup(2)
 
 	cfg.StartGroup(0)
+	fmt.Println("EVENT: StartGroup1")
 	cfg.StartGroup(1)
 	cfg.StartGroup(2)
 
@@ -577,6 +578,7 @@ func TestUnreliable1(t *testing.T) {
 	}
 
 	cfg.join(0)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
 
 	for ii := 0; ii < n*2; ii++ {
@@ -624,8 +626,10 @@ func TestUnreliable2(t *testing.T) {
 	}
 
 	time.Sleep(150 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 	time.Sleep(500 * time.Millisecond)
 	cfg.leave(0)

@@ -31,7 +31,7 @@ type Config struct {
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("{%d %v}", c.Num, c.Shards)
+	return fmt.Sprintf("{%d %v %v}", c.Num, c.Shards, c.Groups)
 }
 
 const (
