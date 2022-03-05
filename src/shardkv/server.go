@@ -63,6 +63,7 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	var shardStates [shardctrler.NShards]ShardState
 	var lastConf shardctrler.Config
 	var conf shardctrler.Config
+	var gs map[int][]string
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
 	if e := d.Decode(&dedup); e == nil {
@@ -79,6 +80,9 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	}
 	if e := d.Decode(&conf); e == nil {
 		kv.config = conf
+	}
+	if e := d.Decode(&gs); e == nil {
+		kv.groups = gs
 	}
 }
 
@@ -117,6 +121,9 @@ func (kv *ShardKV) DoApply() {
 					panic(err)
 				}
 				if err := e.Encode(kv.config); err != nil {
+					panic(err)
+				}
+				if err := e.Encode(kv.groups); err != nil {
 					panic(err)
 				}
 				kv.mu.Unlock()
