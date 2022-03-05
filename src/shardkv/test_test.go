@@ -526,7 +526,7 @@ func TestConcurrent3(t *testing.T) {
 	va := make([]string, n)
 	for i := 0; i < n; i++ {
 		ka[i] = strconv.Itoa(i)
-		va[i] = randstring(1)
+		va[i] = randstring(3)
 		ck.Put(ka[i], va[i])
 	}
 
@@ -536,7 +536,7 @@ func TestConcurrent3(t *testing.T) {
 	ff := func(i int, ck1 *Clerk) {
 		defer func() { ch <- true }()
 		for atomic.LoadInt32(&done) == 0 {
-			x := randstring(1)
+			x := randstring(3)
 			ck1.Append(ka[i], x)
 			va[i] += x
 		}
