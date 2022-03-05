@@ -319,6 +319,7 @@ func TestConcurrent1(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -349,28 +350,41 @@ func TestConcurrent1(t *testing.T) {
 	}
 
 	time.Sleep(150 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: ShutdownGroup1")
 	cfg.ShutdownGroup(1)
+	fmt.Println("EVENT: ShutdownGroup2")
 	time.Sleep(100 * time.Millisecond)
 	cfg.ShutdownGroup(2)
 
+	fmt.Println("EVENT: leave2")
 	cfg.leave(2)
 
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: StartGroup0")
 	cfg.StartGroup(0)
+	fmt.Println("EVENT: StartGroup1")
 	cfg.StartGroup(1)
+	fmt.Println("EVENT: StartGroup2")
 	cfg.StartGroup(2)
 
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
+	fmt.Println("EVENT: join1")
 	time.Sleep(500 * time.Millisecond)
 	cfg.join(1)
 

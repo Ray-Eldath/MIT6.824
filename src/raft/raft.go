@@ -117,7 +117,7 @@ type Raft struct {
 	matchIndex    []int
 	replicateCond []*sync.Cond
 
-	leaseStartAt time.Time
+	leaseEndAt   time.Time
 	leaseSyncing bool
 
 	SdebugPrefix string
@@ -184,7 +184,10 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	term = rf.term
-	isleader = rf.state == Leader && !rf.leaseSyncing && time.Since(rf.leaseStartAt) < LeaseDuration
+	isleader = rf.state == Leader && !rf.leaseSyncing && time.Now().Before(rf.leaseEndAt)
+	if isleader == false {
+		rf.Debug(dTrace, "GetState  state=%d leaseSyncing=%t leaseEndAt=%v", rf.state, rf.leaseSyncing, Microseconds(rf.leaseEndAt))
+	}
 	return term, isleader
 }
 
@@ -305,6 +308,9 @@ func (rf *Raft) Snapshot(seq int, snapshot []byte) {
 			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
 			rf.log[0].Command = nil
 			rf.lastApplied = entry.Index
+			if rf.leaseSyncing && rf.lastApplied >= rf.commitIndex {
+				rf.leaseSyncing = false
+			}
 			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.FormatFullLog())
 			rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
 			return
@@ -721,7 +727,7 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 			continue
 		}
 		rf.lastApplied += 1
-		if rf.leaseSyncing && !rf.needApplyL() {
+		if rf.leaseSyncing && rf.lastApplied >= rf.commitIndex {
 			rf.leaseSyncing = false
 		}
 		entry := rf.GetLogAtIndex(rf.lastApplied)
@@ -748,18 +754,18 @@ func (rf *Raft) needApply() bool {
 }
 
 func (rf *Raft) needApplyL() bool {
-	return rf.commitIndex > rf.lastApplied && (rf.state != Leader || time.Since(rf.leaseStartAt) < LeaseDuration)
+	return rf.commitIndex > rf.lastApplied && (rf.state != Leader || time.Now().Before(rf.leaseEndAt))
 }
 
 type Lease struct {
-	leaseVote    int
-	leaseStartAt time.Time
+	leaseVote  int
+	leaseEndAt time.Time
 }
 
 func (rf *Raft) lease() *Lease {
 	return &Lease{
-		leaseVote:    1,
-		leaseStartAt: time.Now(),
+		leaseVote:  1,
+		leaseEndAt: time.Now().Add(LeaseDuration),
 	}
 }
 
@@ -881,10 +887,10 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs, lease *Lease) {
 		if reply.Success {
 			lease.leaseVote++
 			if rf.IsMajority(lease.leaseVote) {
-				if rf.leaseStartAt.Before(lease.leaseStartAt) {
-					rf.leaseStartAt = lease.leaseStartAt
+				if rf.leaseEndAt.Before(lease.leaseEndAt) {
+					rf.leaseEndAt = lease.leaseEndAt
 				}
-				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), Microseconds(rf.leaseStartAt))
+				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), Microseconds(rf.leaseEndAt))
 			}
 			if len(args.Entries) == 0 {
 				return
@@ -1022,6 +1028,11 @@ func (rf *Raft) killed() bool {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
+	rf.Initialize(peers, me, persister, applyCh)
+	return rf
+}
+
+func (rf *Raft) Initialize(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) {
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
@@ -1057,6 +1068,4 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
-	return rf
 }
