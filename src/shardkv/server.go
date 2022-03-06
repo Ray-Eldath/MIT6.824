@@ -55,6 +55,14 @@ func (kv *ShardKV) isLeader() bool {
 	return isLeader
 }
 
+func (kv *ShardKV) copyDedup() map[int32]int64 {
+	dedup := make(map[int32]int64)
+	for cid, dup := range kv.dedup {
+		dedup[cid] = dup
+	}
+	return dedup
+}
+
 func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	var dedup map[int32]int64
 	var kvmap map[string]string
@@ -144,17 +152,18 @@ func (kv *ShardKV) applyConfig(latest shardctrler.Config, commandIndex int) {
 		return
 	}
 	kv.lastApplied = commandIndex
-	kv.updateShardStates(latest)
-}
-
-func (kv *ShardKV) updateShardStates(latest shardctrler.Config) {
 	kv.mu.Lock()
 	kv.lastConfig = kv.config
 	kv.config = latest
 	for gid, servers := range latest.Groups {
 		kv.groups[gid] = servers
 	}
+	kv.updateShardStatesLW()
+}
 
+// updateShardStatesLW should be called with kv.mu held BUT it'll be unlocked when returned
+func (kv *ShardKV) updateShardStatesLW() {
+	latest := kv.config
 	kv.Debug("applying Config  states=%v", kv.shardStates)
 	handoff := make(map[int][]int) // gid -> shards
 	for shard, gid := range kv.lastConfig.Shards {
@@ -169,28 +178,27 @@ func (kv *ShardKV) updateShardStates(latest shardctrler.Config) {
 	}
 	kv.Debug("applied Config  lastConfig=%+v latest=%+v updatedStates=%v", kv.lastConfig, latest, kv.shardStates)
 
-	dedup := make(map[int32]int64)
-	for cid, dup := range kv.dedup {
-		dedup[cid] = dup
-	}
 	kv.mu.Unlock()
-
 	if kv.isLeader() {
-		for gid, shards := range handoff {
-			slice := make(map[string]string)
-			for key := range kv.kv {
-				for _, shard := range shards {
-					if key2shard(key) == shard {
-						slice[key] = kv.kv[key]
-					}
+		kv.handoff(handoff, latest, kv.copyDedup())
+	}
+}
+
+func (kv *ShardKV) handoff(handoff map[int][]int, latest shardctrler.Config, dedup map[int32]int64) {
+	for gid, shards := range handoff {
+		slice := make(map[string]string)
+		for key := range kv.kv {
+			for _, shard := range shards {
+				if key2shard(key) == shard {
+					slice[key] = kv.kv[key]
 				}
 			}
-			kv.Debug("handoff shards %v to gid %d: %v", shards, gid, slice)
-			if servers, ok := latest.Groups[gid]; ok {
-				kv.handoffCh <- Handoff{HandoffArgs{Num: latest.Num, Origin: kv.gid, Shards: shards, Kv: slice, Dedup: dedup}, gid, servers}
-			} else {
-				panic("no group to handoff")
-			}
+		}
+		kv.Debug("handoff shards %v to gid %d: %v", shards, gid, slice)
+		if servers, ok := latest.Groups[gid]; ok {
+			kv.handoffCh <- Handoff{HandoffArgs{Num: latest.Num, Origin: kv.gid, Shards: shards, Kv: slice, Dedup: dedup}, gid, servers}
+		} else {
+			panic("no group to handoff")
 		}
 	}
 }
@@ -496,6 +504,20 @@ func (kv *ShardKV) Kill() {
 	// Your code here, if desired.
 }
 
+func (kv *ShardKV) resumeHandoff() {
+	handoff := make(map[int][]int) // gid -> shards
+	for shard, gid := range kv.lastConfig.Shards {
+		if kv.shardStates[shard] == Pushing {
+			target := kv.config.Shards[shard]
+			if gid == kv.gid && target != kv.gid { // move from self to others
+				handoff[target] = append(handoff[target], shard)
+			}
+		}
+	}
+	kv.Debug("resumed handoff: %v", handoff)
+	kv.handoff(handoff, kv.config, kv.copyDedup())
+}
+
 //
 // servers[] contains the ports of the servers in this group.
 //
@@ -553,7 +575,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.done = make(map[int]Done)
 	kv.handoffCh = make(chan Handoff, shardctrler.NShards)
 	kv.readSnapshot(persister.ReadSnapshot())
-	kv.Debug("StartServer cid=%d dedup=%v  kv=%v", kv.cid, kv.dedup, kv.kv)
+	kv.resumeHandoff()
+	kv.Debug("StartServer cid=%d config=%v shardStates=%v  dedup=%v kv=%v", kv.cid, kv.config, kv.shardStates, kv.dedup, kv.kv)
 	go kv.DoApply()
 	go kv.DoUpdateConfig()
 	go kv.DoPollHandoff()
