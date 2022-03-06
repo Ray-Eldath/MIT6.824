@@ -1,0 +1,24 @@
+4A x2000:
+avg real 4.56421
+avg user 0.119555
+avg sys 0.009385
+
+Static|JoinLeave|Snapshot|MissChange x2000:
+avg real 17.9611
+avg user 2.17188
+avg sys 0.34615
+
+Concurrent x1000:
+avg real 33.5666
+avg user 28.8179
+avg sys 1.23268
+
+Unreliable x1000:
+avg real 22.5612
+avg user 3.66183
+avg sys 0.51499
+
+Challenge x1000:
+avg real 27.6024
+avg user 2.79362
+avg sys 0.70934

@@ -31,7 +31,9 @@ func TestStaticShards(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	n := 10
@@ -49,6 +51,7 @@ func TestStaticShards(t *testing.T) {
 	// make sure that the data really is sharded by
 	// shutting down one shard and checking that some
 	// Get()s don't succeed.
+	fmt.Println("EVENT: ShutdownGroup1")
 	cfg.ShutdownGroup(1)
 	cfg.checklogs() // forbid snapshots
 
@@ -86,6 +89,7 @@ func TestStaticShards(t *testing.T) {
 	}
 
 	// bring the crashed shard/group back to life.
+	fmt.Println("EVENT: StartGroup1")
 	cfg.StartGroup(1)
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
@@ -102,6 +106,7 @@ func TestJoinLeave(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -116,6 +121,7 @@ func TestJoinLeave(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	for i := 0; i < n; i++ {
@@ -125,6 +131,7 @@ func TestJoinLeave(t *testing.T) {
 		va[i] += x
 	}
 
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
@@ -138,6 +145,7 @@ func TestJoinLeave(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	cfg.checklogs()
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
 
 	for i := 0; i < n; i++ {
@@ -155,6 +163,7 @@ func TestSnapshot(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 30
@@ -169,8 +178,11 @@ func TestSnapshot(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
@@ -180,7 +192,9 @@ func TestSnapshot(t *testing.T) {
 		va[i] += x
 	}
 
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	for i := 0; i < n; i++ {
@@ -200,12 +214,18 @@ func TestSnapshot(t *testing.T) {
 
 	cfg.checklogs()
 
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
+	fmt.Println("EVENT: ShutdownGroup1")
 	cfg.ShutdownGroup(1)
+	fmt.Println("EVENT: ShutdownGroup2")
 	cfg.ShutdownGroup(2)
 
+	fmt.Println("EVENT: StartGroup0")
 	cfg.StartGroup(0)
+	fmt.Println("EVENT: StartGroup1")
 	cfg.StartGroup(1)
+	fmt.Println("EVENT: StartGroup2")
 	cfg.StartGroup(2)
 
 	for i := 0; i < n; i++ {
@@ -223,6 +243,7 @@ func TestMissChange(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -237,14 +258,18 @@ func TestMissChange(t *testing.T) {
 		check(t, ck, ka[i], va[i])
 	}
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	cfg.ShutdownServer(0, 0)
 	cfg.ShutdownServer(1, 0)
 	cfg.ShutdownServer(2, 0)
 
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	for i := 0; i < n; i++ {
@@ -254,6 +279,7 @@ func TestMissChange(t *testing.T) {
 		va[i] += x
 	}
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	for i := 0; i < n; i++ {
@@ -280,7 +306,9 @@ func TestMissChange(t *testing.T) {
 	cfg.ShutdownServer(1, 1)
 	cfg.ShutdownServer(2, 1)
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: leave2")
 	cfg.leave(2)
 
 	for i := 0; i < n; i++ {
@@ -309,6 +337,7 @@ func TestConcurrent1(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -339,29 +368,42 @@ func TestConcurrent1(t *testing.T) {
 	}
 
 	time.Sleep(150 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: ShutdownGroup1")
 	cfg.ShutdownGroup(1)
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: ShutdownGroup2")
 	cfg.ShutdownGroup(2)
 
+	fmt.Println("EVENT: leave2")
 	cfg.leave(2)
 
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: StartGroup0")
 	cfg.StartGroup(0)
+	fmt.Println("EVENT: StartGroup1")
 	cfg.StartGroup(1)
+	fmt.Println("EVENT: StartGroup2")
 	cfg.StartGroup(2)
 
 	time.Sleep(100 * time.Millisecond)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	time.Sleep(1 * time.Second)
@@ -390,8 +432,11 @@ func TestConcurrent2(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 
 	n := 10
@@ -421,22 +466,34 @@ func TestConcurrent2(t *testing.T) {
 		go ff(i, ck1)
 	}
 
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
+	fmt.Println("EVENT: leave2")
 	cfg.leave(2)
 	time.Sleep(3000 * time.Millisecond)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
 	time.Sleep(3000 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
+	fmt.Println("EVENT: leave2")
 	cfg.leave(2)
 	time.Sleep(3000 * time.Millisecond)
 
+	fmt.Println("EVENT: ShutdownGroup1")
 	cfg.ShutdownGroup(1)
+	fmt.Println("EVENT: ShutdownGroup2")
 	cfg.ShutdownGroup(2)
 	time.Sleep(1000 * time.Millisecond)
+	fmt.Println("EVENT: StartGroup1")
 	cfg.StartGroup(1)
+	fmt.Println("EVENT: StartGroup2")
 	cfg.StartGroup(2)
 
 	time.Sleep(2 * time.Second)
@@ -461,6 +518,7 @@ func TestConcurrent3(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -468,7 +526,7 @@ func TestConcurrent3(t *testing.T) {
 	va := make([]string, n)
 	for i := 0; i < n; i++ {
 		ka[i] = strconv.Itoa(i)
-		va[i] = randstring(1)
+		va[i] = randstring(3)
 		ck.Put(ka[i], va[i])
 	}
 
@@ -478,7 +536,7 @@ func TestConcurrent3(t *testing.T) {
 	ff := func(i int, ck1 *Clerk) {
 		defer func() { ch <- true }()
 		for atomic.LoadInt32(&done) == 0 {
-			x := randstring(1)
+			x := randstring(3)
 			ck1.Append(ka[i], x)
 			va[i] += x
 		}
@@ -491,18 +549,28 @@ func TestConcurrent3(t *testing.T) {
 
 	t0 := time.Now()
 	for time.Since(t0) < 12*time.Second {
+		fmt.Println("EVENT: join2")
 		cfg.join(2)
+		fmt.Println("EVENT: join1")
 		cfg.join(1)
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
+		fmt.Println("EVENT: ShutdownGroup0")
 		cfg.ShutdownGroup(0)
+		fmt.Println("EVENT: ShutdownGroup1")
 		cfg.ShutdownGroup(1)
+		fmt.Println("EVENT: ShutdownGroup2")
 		cfg.ShutdownGroup(2)
+		fmt.Println("EVENT: StartGroup0")
 		cfg.StartGroup(0)
+		fmt.Println("EVENT: StartGroup1")
 		cfg.StartGroup(1)
+		fmt.Println("EVENT: StartGroup2")
 		cfg.StartGroup(2)
 
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
+		fmt.Println("EVENT: leave1")
 		cfg.leave(1)
+		fmt.Println("EVENT: leave2")
 		cfg.leave(2)
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
 	}
@@ -529,6 +597,7 @@ func TestUnreliable1(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -540,8 +609,11 @@ func TestUnreliable1(t *testing.T) {
 		ck.Put(ka[i], va[i])
 	}
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	for ii := 0; ii < n*2; ii++ {
@@ -552,7 +624,9 @@ func TestUnreliable1(t *testing.T) {
 		va[i] += x
 	}
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
 
 	for ii := 0; ii < n*2; ii++ {
@@ -571,6 +645,7 @@ func TestUnreliable2(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -600,15 +675,21 @@ func TestUnreliable2(t *testing.T) {
 	}
 
 	time.Sleep(150 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	time.Sleep(2 * time.Second)
@@ -638,6 +719,7 @@ func TestUnreliable3(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	n := 10
@@ -691,15 +773,21 @@ func TestUnreliable3(t *testing.T) {
 	}
 
 	time.Sleep(150 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: leave1")
 	cfg.leave(1)
 	time.Sleep(500 * time.Millisecond)
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	time.Sleep(2 * time.Second)
@@ -744,6 +832,7 @@ func TestChallenge1Delete(t *testing.T) {
 
 	ck := cfg.makeClient()
 
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	// 30,000 bytes of total values.
@@ -760,15 +849,21 @@ func TestChallenge1Delete(t *testing.T) {
 	}
 
 	for iters := 0; iters < 2; iters++ {
+		fmt.Println("EVENT: join1")
 		cfg.join(1)
+		fmt.Println("EVENT: leave0")
 		cfg.leave(0)
+		fmt.Println("EVENT: join2")
 		cfg.join(2)
 		time.Sleep(3 * time.Second)
 		for i := 0; i < 3; i++ {
 			check(t, ck, ka[i], va[i])
 		}
+		fmt.Println("EVENT: leave1")
 		cfg.leave(1)
+		fmt.Println("EVENT: join0")
 		cfg.join(0)
+		fmt.Println("EVENT: leave2")
 		cfg.leave(2)
 		time.Sleep(3 * time.Second)
 		for i := 0; i < 3; i++ {
@@ -776,7 +871,9 @@ func TestChallenge1Delete(t *testing.T) {
 		}
 	}
 
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
+	fmt.Println("EVENT: join2")
 	cfg.join(2)
 	time.Sleep(1 * time.Second)
 	for i := 0; i < 3; i++ {
@@ -830,6 +927,7 @@ func TestChallenge2Unaffected(t *testing.T) {
 	ck := cfg.makeClient()
 
 	// JOIN 100
+	fmt.Println("EVENT: join0")
 	cfg.join(0)
 
 	// Do a bunch of puts to keys in all shards
@@ -843,6 +941,7 @@ func TestChallenge2Unaffected(t *testing.T) {
 	}
 
 	// JOIN 101
+	fmt.Println("EVENT: join1")
 	cfg.join(1)
 
 	// QUERY to find shards now owned by 101
@@ -864,10 +963,12 @@ func TestChallenge2Unaffected(t *testing.T) {
 	}
 
 	// KILL 100
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
 
 	// LEAVE 100
 	// 101 doesn't get a chance to migrate things previously owned by 100
+	fmt.Println("EVENT: leave0")
 	cfg.leave(0)
 
 	// Wait to make sure clients see new config
@@ -923,6 +1024,7 @@ func TestChallenge2Partial(t *testing.T) {
 	}
 
 	// KILL 100
+	fmt.Println("EVENT: ShutdownGroup0")
 	cfg.ShutdownGroup(0)
 
 	// LEAVE 100 + 102
