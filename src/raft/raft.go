@@ -51,6 +51,7 @@ type ApplyMsg struct {
 	Snapshot      []byte
 	SnapshotTerm  int
 	SnapshotIndex int
+	SnapshotSeq   int
 }
 
 type State int8
@@ -74,13 +75,19 @@ func (s State) String() string {
 }
 
 type LogEntry struct {
+	Valid   bool
 	Term    int
 	Index   int
+	Seq     int
 	Command interface{}
 }
 
 func (e *LogEntry) String() string {
-	return fmt.Sprintf("{%d t%d %v}", e.Index, e.Term, e.Command)
+	if e.Valid {
+		return fmt.Sprintf("{%d s%d t%d %v}", e.Index, e.Seq, e.Term, e.Command)
+	} else {
+		return fmt.Sprintf("<%d s%d t%d>", e.Index, e.Seq, e.Term)
+	}
 }
 
 //
@@ -106,11 +113,15 @@ type Raft struct {
 	commitIndex   int
 	lastApplied   int
 	applyCond     *sync.Cond
+	applyCh       chan ApplyMsg
 	nextIndex     []int
 	matchIndex    []int
 	replicateCond []*sync.Cond
 
-	applyCh chan ApplyMsg
+	leaseEndAt   time.Time
+	leaseSyncing bool
+
+	SdebugPrefix string
 }
 
 func (rf *Raft) IsMajority(vote int) bool {
@@ -153,10 +164,12 @@ func (rf *Raft) resetTerm(term int) {
 
 func (rf *Raft) becomeFollower() {
 	rf.state = Follower
+	rf.leaseSyncing = false
 }
 
 func (rf *Raft) becomeCandidate() {
 	rf.state = Candidate
+	rf.leaseSyncing = false
 }
 
 func (rf *Raft) becomeLeader() {
@@ -172,7 +185,10 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	term = rf.term
-	isleader = rf.state == Leader
+	isleader = rf.state == Leader && !rf.leaseSyncing && time.Now().Before(rf.leaseEndAt)
+	if isleader == false {
+		rf.Debug(dTrace, "GetState  state=%d leaseSyncing=%t leaseEndAt=%v", rf.state, rf.leaseSyncing, Microseconds(rf.leaseEndAt))
+	}
 	return term, isleader
 }
 
@@ -251,7 +267,7 @@ type AppendEntriesReply struct {
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 //
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
+func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, lastIncludedSeq int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.Debug(dSnapshot, "CondInstallSnapshot lastIncludedTerm=%d lastIncludedIndex=%d  %s", lastIncludedTerm, lastIncludedIndex, rf.FormatStateOnly())
@@ -269,6 +285,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	}
 	rf.log[0].Index = lastIncludedIndex
 	rf.log[0].Term = lastIncludedTerm
+	rf.log[0].Seq = lastIncludedSeq
 	rf.log[0].Command = nil
 	rf.commitIndex = lastIncludedIndex
 	rf.lastApplied = lastIncludedIndex
@@ -281,15 +298,21 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // all info up to and including index. this means the
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
+func (rf *Raft) Snapshot(seq int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.Debug(dSnapshot, "snapshot until %d", index)
-	for _, entry := range rf.log {
-		if entry.Index == index {
+	for i := len(rf.log) - 1; i >= 0; i-- {
+		entry := rf.log[i]
+		if entry.Seq == seq {
+			rf.Debug(dSnapshot, "snapshot until %d (seq %d)", entry.Index, seq)
 			rf.Debug(dSnapshot, "before snapshot:  full log: %v", rf.FormatFullLog())
 			rf.log = rf.log[rf.LogIndexToSubscript(entry.Index):]
 			rf.log[0].Command = nil
+			rf.lastApplied = entry.Index
+			rf.commitIndex = Max(rf.commitIndex, entry.Index)
+			if rf.leaseSyncing && rf.lastApplied >= rf.commitIndex {
+				rf.leaseSyncing = false
+			}
 			rf.Debug(dSnapshot, "after snapshot:  full log: %s", rf.FormatFullLog())
 			rf.persister.SaveStateAndSnapshot(rf.serializeState(), snapshot)
 			return
@@ -503,6 +526,7 @@ type InstallSnapshotArgs struct {
 	Term              int
 	LeaderId          int
 	LastIncludedIndex int
+	LastIncludedSeq   int
 	LastIncludedTerm  int
 	Data              []byte
 }
@@ -522,7 +546,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 	rf.lastHeartbeat = now
 
-	rf.Debug(dSnapshot, "receive InstallSnapshot from S%d args.term=%d LastIncludedIndex=%d LastIncludedTerm=%d", args.LeaderId, args.Term, args.LastIncludedIndex, args.LastIncludedTerm)
+	rf.Debug(dSnapshot, "receive InstallSnapshot from S%d args.term=%d LastIncludedIndex=%d LastIncludedSeq=%d LastIncludedTerm=%d", args.LeaderId, args.Term, args.LastIncludedIndex, args.LastIncludedSeq, args.LastIncludedTerm)
 	if rf.state == Candidate && args.Term >= rf.term {
 		rf.Debug(dSnapshot, "received term %d >= currentTerm %d from S%d, leader is legitimate", args.Term, rf.term, args.LeaderId)
 		rf.becomeFollower()
@@ -544,6 +568,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 			Snapshot:      args.Data,
 			SnapshotTerm:  args.LastIncludedTerm,
 			SnapshotIndex: args.LastIncludedIndex,
+			SnapshotSeq:   args.LastIncludedSeq,
 		}
 	}()
 }
@@ -556,6 +581,7 @@ const (
 	ElectionTimeoutMax = int64(600 * time.Millisecond)
 	ElectionTimeoutMin = int64(500 * time.Millisecond)
 	HeartbeatInterval  = 100 * time.Millisecond
+	LeaseDuration      = 400 * time.Millisecond
 )
 
 func NextElectionTimeout() time.Duration {
@@ -622,7 +648,13 @@ func (rf *Raft) DoElection() {
 							rf.matchIndex[rf.me] = rf.LogTail().Index
 							rf.Debug(dLeader, "majority vote (%d/%d) received, turning Leader  %s", vote, len(rf.peers), rf.FormatState())
 							rf.becomeLeader()
-							rf.BroadcastHeartbeat()
+							rf.leaseSyncing = true
+							rf.StartL(LogEntry{
+								Valid: false,
+								Term:  rf.term,
+								Index: rf.LogTail().Index + 1,
+								Seq:   rf.LogTail().Seq,
+							})
 						}
 					}
 				}(i, args)
@@ -649,12 +681,13 @@ func (rf *Raft) BroadcastHeartbeat() {
 	// }
 	rf.mu.Unlock()
 
+	lease := rf.lease()
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
 
-		go rf.Replicate(i)
+		go rf.Replicate(i, lease)
 	}
 
 	rf.mu.Lock()
@@ -696,6 +729,9 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 			continue
 		}
 		rf.lastApplied += 1
+		if rf.leaseSyncing && rf.lastApplied >= rf.commitIndex {
+			rf.leaseSyncing = false
+		}
 		entry := rf.GetLogAtIndex(rf.lastApplied)
 		if entry == nil {
 			panic(rf.Sdebug(dFatal, "entry == nil  %s", rf.FormatState()))
@@ -706,8 +742,8 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 
 		applyCh <- ApplyMsg{
 			Command:      toCommit.Command,
-			CommandValid: true,
-			CommandIndex: toCommit.Index,
+			CommandValid: toCommit.Valid,
+			CommandIndex: toCommit.Seq,
 		}
 	}
 }
@@ -715,12 +751,21 @@ func (rf *Raft) DoApply(applyCh chan ApplyMsg) {
 func (rf *Raft) needApply() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.Debug(dTrace, "needApply: commitIndex=%d lastApplied=%d", rf.commitIndex, rf.lastApplied)
+	rf.Debug(dTrace, "needApply: commitIndex=%d lastApplied=%d leaseSyncing=%t leaseEndAt=%s", rf.commitIndex, rf.lastApplied, rf.leaseSyncing, Microseconds(rf.leaseEndAt))
 	return rf.needApplyL()
 }
 
 func (rf *Raft) needApplyL() bool {
-	return rf.commitIndex > rf.lastApplied
+	return rf.commitIndex > rf.lastApplied && (rf.state != Leader || time.Now().Before(rf.leaseEndAt))
+}
+
+type Lease struct {
+	leaseVote  int
+	leaseEndAt time.Time
+}
+
+func (rf *Raft) lease() *Lease {
+	return &Lease{1, time.Now().Add(LeaseDuration)}
 }
 
 func (rf *Raft) DoReplicate(peer int) {
@@ -736,7 +781,7 @@ func (rf *Raft) DoReplicate(peer int) {
 			}
 		}
 
-		rf.Replicate(peer)
+		rf.Replicate(peer, rf.lease())
 	}
 }
 
@@ -751,7 +796,7 @@ func (rf *Raft) needReplicate(peer int) bool {
 }
 
 // Replicate must be called W/O rf.mu held.
-func (rf *Raft) Replicate(peer int) {
+func (rf *Raft) Replicate(peer int, lease *Lease) {
 	rf.mu.Lock()
 	if rf.state != Leader {
 		rf.mu.Unlock()
@@ -763,6 +808,7 @@ func (rf *Raft) Replicate(peer int) {
 			Term:              rf.term,
 			LeaderId:          rf.me,
 			LastIncludedIndex: rf.log[0].Index,
+			LastIncludedSeq:   rf.log[0].Seq,
 			LastIncludedTerm:  rf.log[0].Term,
 			Data:              rf.persister.ReadSnapshot(),
 		}
@@ -802,7 +848,7 @@ func (rf *Raft) Replicate(peer int) {
 		entries = append(entries, &entry)
 	}
 	prev := rf.GetLogAtIndex(nextIndex - 1)
-	rf.Debug(dWarn, "replicate S%d nextIndex=%v matchIndex=%v prevLog: %v", peer, rf.nextIndex, rf.matchIndex, prev)
+	rf.Debug(dWarn, "replicate S%d lease=%p nextIndex=%v matchIndex=%v prevLog: %v", peer, lease, rf.nextIndex, rf.matchIndex, prev)
 	args := &AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
@@ -814,11 +860,11 @@ func (rf *Raft) Replicate(peer int) {
 	// rf.Debug(dReplicate, "replication triggered for S%d with args %+v", peer, args)
 	rf.mu.Unlock()
 
-	rf.Sync(peer, args)
+	rf.Sync(peer, args, lease)
 }
 
 // Sync must be called W/O rf.mu held.
-func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
+func (rf *Raft) Sync(peer int, args *AppendEntriesArgs, lease *Lease) {
 	var reply AppendEntriesReply
 	ok := rf.sendAppendEntries(peer, args, &reply)
 	if !ok {
@@ -827,7 +873,7 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.Debug(dHeartbeat, "S%d AppendEntriesReply %+v rf.term=%d args.Term=%d", peer, reply, rf.term, args.Term)
+	rf.Debug(dHeartbeat, "S%d AppendEntriesReply %+v rf.term=%d args.Term=%d lease=%+v", peer, reply, rf.term, args.Term, lease)
 	if rf.term != args.Term {
 		rf.Debug(dHeartbeat, "S%d AppendEntriesReply rejected since rf.term(%d) != args.Term(%d)", peer, rf.term, args.Term)
 		return
@@ -838,7 +884,15 @@ func (rf *Raft) Sync(peer int, args *AppendEntriesArgs) {
 		rf.resetTerm(reply.Term)
 	} else {
 		if reply.Success {
+			lease.leaseVote++
+			if rf.IsMajority(lease.leaseVote) {
+				if rf.leaseEndAt.Before(lease.leaseEndAt) {
+					rf.leaseEndAt = lease.leaseEndAt
+				}
+				rf.Debug(dHeartbeat, "leaseVote (%d/%d), update lease to %v", lease.leaseVote, len(rf.peers), Microseconds(rf.leaseEndAt))
+			}
 			if len(args.Entries) == 0 {
+				rf.applyCond.Broadcast()
 				return
 			}
 			logTailIndex := LogTail(args.Entries).Index
@@ -909,10 +963,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 	entry := LogEntry{
+		Valid:   true,
 		Term:    rf.term,
 		Index:   rf.LogTail().Index + 1,
+		Seq:     rf.LogTail().Seq + 1,
 		Command: command,
 	}
+	rf.StartL(entry)
+	return entry.Seq, rf.term, rf.state == Leader
+}
+
+func (rf *Raft) StartL(entry LogEntry) {
 	rf.log = append(rf.log, &entry)
 	rf.persist()
 	rf.matchIndex[rf.me] += 1
@@ -930,7 +991,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// personally I think the commented Sync design is better, but that wont make us pass speed tests in Lab 3.
 	// TODO: how could the actual system find the sweet point between network overhead and replication latency?
 	rf.BroadcastHeartbeat()
-	return entry.Index, rf.term, rf.state == Leader
 }
 
 //
@@ -968,6 +1028,11 @@ func (rf *Raft) killed() bool {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
+	rf.Initialize(peers, me, persister, applyCh)
+	return rf
+}
+
+func (rf *Raft) Initialize(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) {
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
@@ -979,6 +1044,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.log = append(rf.log, &LogEntry{
 		Term:    0,
 		Index:   0,
+		Seq:     0,
 		Command: nil,
 	})
 
@@ -1002,7 +1068,4 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
-
-	return rf
 }

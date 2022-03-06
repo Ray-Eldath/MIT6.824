@@ -91,7 +91,7 @@ func (rf *Raft) Debug(topic logTopic, format string, a ...interface{}) {
 func (rf *Raft) Sdebug(topic logTopic, format string, a ...interface{}) string {
 	preamble := strings.Repeat(Padding, rf.me)
 	epilogue := strings.Repeat(Padding, len(rf.peers)-rf.me-1)
-	prefix := fmt.Sprintf("%s%s %-5s [%s t%02d S%d] %s", preamble, Microseconds(time.Now()), string(topic), rf.state, rf.term, rf.me, epilogue)
+	prefix := fmt.Sprintf("%s%s%s %-5s [%s t%02d S%d] %s", rf.SdebugPrefix, preamble, Microseconds(time.Now()), string(topic), rf.state, rf.term, rf.me, epilogue)
 	format = prefix + format
 	return fmt.Sprintf(format, a...)
 }

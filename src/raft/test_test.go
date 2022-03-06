@@ -107,16 +107,22 @@ func TestManyElections2A(t *testing.T) {
 		i1 := rand.Int() % servers
 		i2 := rand.Int() % servers
 		i3 := rand.Int() % servers
+		fmt.Printf("EVENT: disconnect%d\n", i1)
 		cfg.disconnect(i1)
+		fmt.Printf("EVENT: disconnect%d\n", i2)
 		cfg.disconnect(i2)
+		fmt.Printf("EVENT: disconnect%d\n", i3)
 		cfg.disconnect(i3)
 
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
 		cfg.checkOneLeader()
 
+		fmt.Printf("EVENT: connect%d\n", i1)
 		cfg.connect(i1)
+		fmt.Printf("EVENT: connect%d\n", i2)
 		cfg.connect(i2)
+		fmt.Printf("EVENT: connect%d\n", i3)
 		cfg.connect(i3)
 	}
 

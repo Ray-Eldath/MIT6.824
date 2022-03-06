@@ -1,0 +1,23 @@
+2A|2B x2000:
+avg real 50.6648
+avg user 1.04767
+avg sys 0.295595
+
+2C x1000:
+avg real 122.481
+avg user 18.9086
+avg sys 1.38669
+
+2D x1000:
+avg real 157.723
+avg user 3.08175
+avg sys 0.96717
+
+3A x1000:
+
+TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B x10000:
+avg real 60.5453
+avg user 2.33789
+avg sys 0.699236
+
+3B x1000:
