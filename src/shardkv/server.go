@@ -16,13 +16,22 @@ import (
 
 type Done chan GetReply
 
+type Config struct {
+	Conf      shardctrler.Config
+	Committer int
+}
+
+func (c Config) String() string {
+	return fmt.Sprintf("{%d %v}", c.Committer, c.Conf)
+}
+
 type ShardKV struct {
 	mu           sync.Mutex
 	me           int
 	rf           *raft.Raft
 	mck          *shardctrler.Clerk
-	config       shardctrler.Config
-	lastConfig   shardctrler.Config
+	config       Config
+	lastConfig   Config
 	groups       map[int][]string
 	applyCh      chan raft.ApplyMsg
 	make_end     func(string) *labrpc.ClientEnd
@@ -67,8 +76,8 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	var dedup map[int32]int64
 	var kvmap map[string]string
 	var shardStates [shardctrler.NShards]ShardState
-	var lastConf shardctrler.Config
-	var conf shardctrler.Config
+	var lastConf Config
+	var conf Config
 	var gs map[int][]string
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
@@ -95,7 +104,7 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 func (kv *ShardKV) DoApply() {
 	for v := range kv.applyCh {
 		if v.CommandValid {
-			if latest, ok := v.Command.(shardctrler.Config); ok {
+			if latest, ok := v.Command.(Config); ok {
 				kv.applyConfig(latest, v.CommandIndex)
 			} else {
 				val, err := kv.applyMsg(v)
@@ -146,7 +155,7 @@ func (kv *ShardKV) DoApply() {
 	}
 }
 
-func (kv *ShardKV) applyConfig(latest shardctrler.Config, commandIndex int) {
+func (kv *ShardKV) applyConfig(latest Config, commandIndex int) {
 	if commandIndex <= kv.lastApplied {
 		kv.Debug("reject Config due to <= Index. lastApplied=%d latest=%+v", kv.lastApplied, latest)
 		return
@@ -155,7 +164,7 @@ func (kv *ShardKV) applyConfig(latest shardctrler.Config, commandIndex int) {
 	kv.mu.Lock()
 	kv.lastConfig = kv.config
 	kv.config = latest
-	for gid, servers := range latest.Groups {
+	for gid, servers := range latest.Conf.Groups {
 		kv.groups[gid] = servers
 	}
 	kv.updateShardStatesLW()
@@ -166,9 +175,9 @@ func (kv *ShardKV) updateShardStatesLW() {
 	latest := kv.config
 	kv.Debug("applying Config  states=%v", kv.shardStates)
 	handoff := make(map[int][]int) // gid -> shards
-	for shard, gid := range kv.lastConfig.Shards {
-		target := kv.config.Shards[shard]
-		kv.config.Shards[shard] = target
+	for shard, gid := range kv.lastConfig.Conf.Shards {
+		target := kv.config.Conf.Shards[shard]
+		kv.config.Conf.Shards[shard] = target
 		if gid == kv.gid && target != kv.gid { // move from self to others
 			handoff[target] = append(handoff[target], shard)
 			kv.shardStates[shard] = Pushing
@@ -179,8 +188,8 @@ func (kv *ShardKV) updateShardStatesLW() {
 	kv.Debug("applied Config  lastConfig=%+v latest=%+v updatedStates=%v", kv.lastConfig, latest, kv.shardStates)
 
 	kv.mu.Unlock()
-	if kv.isLeader() {
-		kv.handoff(handoff, latest, kv.copyDedup())
+	if kv.isLeader() || kv.me == latest.Committer {
+		kv.handoff(handoff, latest.Conf, kv.copyDedup())
 	}
 }
 
@@ -244,11 +253,11 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.Debug("HandoffArgs duplicate found for %d  args=%+v", dup, args)
 			return "", OK
 		}
-		if args.Num > kv.config.Num {
-			kv.Debug("reject Handoff due to args.Num %d > kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+		if args.Num > kv.config.Conf.Num {
+			kv.Debug("reject Handoff due to args.Num %d > kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Conf.Num, kv.config, args)
 			return "", ErrTimeout
-		} else if args.Num < kv.config.Num {
-			kv.Debug("ignore Handoff due to args.Num %d < kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+		} else if args.Num < kv.config.Conf.Num {
+			kv.Debug("ignore Handoff due to args.Num %d < kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Conf.Num, kv.config, args)
 			return "", OK
 		}
 		allServing := true
@@ -276,11 +285,11 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 		kv.Debug("applied HandoffArgs from gid %d => %v states: %v  args: %v", args.Origin, kv.config, kv.shardStates, args)
 		return "", OK
 	case HandoffDoneArgs:
-		if args.Num > kv.config.Num {
-			kv.Debug("reject HandoffDoneArgs due to args.Num %d > kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+		if args.Num > kv.config.Conf.Num {
+			kv.Debug("reject HandoffDoneArgs due to args.Num %d > kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Conf.Num, kv.config, args)
 			return "", ErrTimeout
-		} else if args.Num < kv.config.Num {
-			kv.Debug("ignore HandoffDoneArgs due to args.Num %d < kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+		} else if args.Num < kv.config.Conf.Num {
+			kv.Debug("ignore HandoffDoneArgs due to args.Num %d < kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Conf.Num, kv.config, args)
 			return "", OK
 		}
 		for _, k := range args.Keys {
@@ -317,9 +326,9 @@ updateConfig:
 				continue updateConfig
 			}
 		}
-		num := kv.config.Num + 1
+		num := kv.config.Conf.Num + 1
 		kv.mu.Unlock()
-		kv.rf.Start(kv.mck.Query(num))
+		kv.rf.Start(Config{kv.mck.Query(num), kv.me})
 	}
 }
 
@@ -484,7 +493,7 @@ func (kv *ShardKV) checkKey(key string) Err {
 
 func (kv *ShardKV) checkKeyL(key string) Err {
 	shard := key2shard(key)
-	if kv.config.Shards[shard] == kv.gid {
+	if kv.config.Conf.Shards[shard] == kv.gid {
 		if kv.shardStates[shard] == Serving {
 			return OK
 		}
@@ -506,16 +515,16 @@ func (kv *ShardKV) Kill() {
 
 func (kv *ShardKV) resumeHandoff() {
 	handoff := make(map[int][]int) // gid -> shards
-	for shard, gid := range kv.lastConfig.Shards {
+	for shard, gid := range kv.lastConfig.Conf.Shards {
 		if kv.shardStates[shard] == Pushing {
-			target := kv.config.Shards[shard]
+			target := kv.config.Conf.Shards[shard]
 			if gid == kv.gid && target != kv.gid { // move from self to others
 				handoff[target] = append(handoff[target], shard)
 			}
 		}
 	}
 	kv.Debug("resumed handoff: %v", handoff)
-	kv.handoff(handoff, kv.config, kv.copyDedup())
+	kv.handoff(handoff, kv.config.Conf, kv.copyDedup())
 }
 
 //
@@ -549,7 +558,7 @@ func (kv *ShardKV) resumeHandoff() {
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	labgob.Register(GetArgs{})
 	labgob.Register(PutAppendArgs{})
-	labgob.Register(shardctrler.Config{})
+	labgob.Register(Config{})
 	labgob.Register(HandoffArgs{})
 	labgob.Register(HandoffDoneArgs{})
 
