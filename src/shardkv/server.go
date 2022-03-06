@@ -236,9 +236,12 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			kv.Debug("HandoffArgs duplicate found for %d  args=%+v", dup, args)
 			return "", OK
 		}
-		if args.Num != kv.config.Num {
-			kv.Debug("reject Handoff due to args.Num %d != kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+		if args.Num > kv.config.Num {
+			kv.Debug("reject Handoff due to args.Num %d > kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
 			return "", ErrTimeout
+		} else if args.Num < kv.config.Num {
+			kv.Debug("ignore Handoff due to args.Num %d < kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+			return "", OK
 		}
 		allServing := true
 		for _, shard := range args.Shards {
@@ -247,7 +250,7 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 			}
 		}
 		if allServing {
-			kv.Debug("reject Handoff due to allServing. current=%+v args=%+v", kv.config, args)
+			kv.Debug("ignore Handoff due to allServing. current=%+v args=%+v", kv.config, args)
 			return "", OK
 		}
 		for k, v := range args.Kv {
@@ -265,9 +268,12 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 		kv.Debug("applied HandoffArgs from gid %d => %v states: %v  args: %v", args.Origin, kv.config, kv.shardStates, args)
 		return "", OK
 	case HandoffDoneArgs:
-		if args.Num != kv.config.Num {
-			kv.Debug("reject HandoffReply due to args.Num %d != kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+		if args.Num > kv.config.Num {
+			kv.Debug("reject HandoffDoneArgs due to args.Num %d > kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
 			return "", ErrTimeout
+		} else if args.Num < kv.config.Num {
+			kv.Debug("ignore HandoffDoneArgs due to args.Num %d < kv.config.Num %d. current=%+v args=%+v", args.Num, kv.config.Num, kv.config, args)
+			return "", OK
 		}
 		for _, k := range args.Keys {
 			delete(kv.kv, k)
@@ -282,7 +288,11 @@ func (kv *ShardKV) applyMsg(v raft.ApplyMsg) (string, Err) {
 	}
 }
 
-const UpdateConfigInterval = 100 * time.Millisecond
+const (
+	UpdateConfigInterval     = 100 * time.Millisecond
+	UpdateConfigPollInterval = 200 * time.Millisecond
+	TimeoutInterval          = 500 * time.Millisecond
+)
 
 func (kv *ShardKV) DoUpdateConfig() {
 updateConfig:
@@ -357,7 +367,7 @@ func (kv *ShardKV) DoPollHandoff() {
 					panic("handoff reply.Err == ErrWrongGroup")
 				}
 			}
-			time.Sleep(UpdateConfigInterval)
+			time.Sleep(UpdateConfigPollInterval)
 		}
 	}
 }
@@ -401,7 +411,7 @@ func (kv *ShardKV) pollHandoffDone(args HandoffDoneArgs, origin int) {
 				panic("handoff reply.Err == ErrWrongGroup")
 			}
 		}
-		time.Sleep(UpdateConfigInterval)
+		time.Sleep(UpdateConfigPollInterval)
 	}
 }
 
@@ -435,8 +445,6 @@ func (kv *ShardKV) Command(ty string, key string, args interface{}) (val string,
 	}
 	return kv.startAndWait(ty, args)
 }
-
-const TimeoutInterval = 500 * time.Millisecond
 
 // startAndWait args needs to be raw type (not pointer)
 func (kv *ShardKV) startAndWait(ty string, cmd interface{}) (val string, err Err) {
