@@ -25,3 +25,5 @@ MIT 6.824: Distributed Systems (Spring 2020)
 This repo is really a high quality implementation. All tests passed for at lease 1000 times, and Linearizable3B in kvraft passed for 10000 times. I finished two challenges in Lab 4 and a set of extra optimizations which are deemed hard to achieve by many (though a very small modification to test suites has been carried out). The code is well-structured and clean, leads to a well balance between maintainability and abstraction. Plus, I carefully cherry-picked and squashed commits to make them atomic, and only least required alternation is made which follows a clear logic.
 
 I think the optimization (LeaseRead with noop) and several topics in shardkv are worth discussing, I'll write a blog post on this [on my personal blog](https://ray-eldath.me/) later on.
+
+EDIT 2022/3/16: This blog post has been posted [here (in Chinese Simplified)](https://ray-eldath.me/programming/deep-dive-in-6824/).
